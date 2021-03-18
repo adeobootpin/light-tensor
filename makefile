@@ -22,7 +22,7 @@ LINK_LIBS=-ltensor
 LIBTORCH_LIBS=-lc10 -lc10_cuda -ltorch_cuda -ltorch_cpu
 
 CC=g++
-LIB_SRC_DIR = ./l-tensor
+LIB_SRC_DIR = ./l-ten
 TEST_SRC_DIR = ./tests
 BENCHMARK_MNIST_SRC_DIR = ./benchmark_MNIST
 BENCHMARK_SPEECH_CMDS_SRC_DIR = ./benchmark_speech_commands
@@ -140,14 +140,14 @@ libtensor.a: $(LIB_OBJ_FILES)
 
 -include $(DEPENDS)
 
-l-tensor/im_col.cu.o:
-	nvcc l-tensor/im_col.cu $(NVCC_FLAGS) -I$(CUDA_INCLUDE_DIR) -o l-tensor/im_col.cu.o
+l-ten/im_col.cu.o:
+	nvcc l-ten/im_col.cu $(NVCC_FLAGS) -I$(CUDA_INCLUDE_DIR) -o l-ten/im_col.cu.o
 
-l-tensor/utils.cu.o:
-	nvcc l-tensor/utils.cu $(NVCC_FLAGS) -I$(CUDA_INCLUDE_DIR) -o l-tensor/utils.cu.o
+l-ten/utils.cu.o:
+	nvcc l-ten/utils.cu $(NVCC_FLAGS) -I$(CUDA_INCLUDE_DIR) -o l-ten/utils.cu.o
 
-l-tensor/math_fns.cu.o:
-	nvcc l-tensor/math_fns.cu $(NVCC_FLAGS) -I$(CUDA_INCLUDE_DIR) -o l-tensor/math_fns.cu.o
+l-ten/math_fns.cu.o:
+	nvcc l-ten/math_fns.cu $(NVCC_FLAGS) -I$(CUDA_INCLUDE_DIR) -o l-ten/math_fns.cu.o
 
 clean:
 	rm -f test benchmark $(TEST_OBJ_FILES) $(LIB_OBJ_FILES) libtensor.a $(DEPENDS)
