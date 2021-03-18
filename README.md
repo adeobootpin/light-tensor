@@ -1,1 +1,1 @@
-# light-tensor
+# light-tensor framework (l-ten)
