@@ -1,7 +1,7 @@
 # light-tensor framework (l-ten)
 
-## Low overhead design for fast training and inference
+### Low overhead design for fast training and inference
 
-## Faster than libtorch (the C++ backend for PyTorch)
+### Faster than libtorch (the C++ backend for PyTorch)
 
-## Similar API to libtorch
+### Similar API to libtorch
