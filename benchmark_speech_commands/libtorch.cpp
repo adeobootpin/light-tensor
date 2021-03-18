@@ -113,7 +113,7 @@ int speech_commands_libtorch(DATASET_DATA* training_set, DATASET_DATA* testing_s
 
 	torch::Device device(torch::kCUDA);
 
-	int batch_size = 32;
+	int batch_size = 64;
 	int test_batch_size = 1;
 	int input_dim = 80;
 	int hidden_dim_1 = 256;

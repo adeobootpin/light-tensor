@@ -77,7 +77,7 @@ int speech_commands_lten(DATASET_DATA* training_set, DATASET_DATA* test_set, int
 	float val;
 	lten::Tensor temp;
 
-	batch_size = 32;
+	batch_size = 64;
 	Net net(input_dim, hidden_dim_1, hidden_dim_2, sequence_len, label_len);
 
 	std::chrono::steady_clock::time_point clock_begin;

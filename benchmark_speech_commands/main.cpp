@@ -36,17 +36,17 @@ int main(int argc, char* argv[])
 	}
 
 
-	std::cout << "loading speech commands data set...  ";
+	std::cout << "loading speech commands data set..." << std::endl;;
 
 	LoadDataset(speech_commands_training_list, speech_commands_training_dir, &training_set);
 	LoadDataset(speech_commands_testing_list, speech_commands_testing_dir, &testing_set);
 
-	std::cout << "done" << std::endl;
+	std::cout << "done [trainig examples: " << training_set.total_examples << " test examples: " << testing_set.total_examples << "]\n" << std::endl;
 
-	std::cout << "speech commands training using libtorch library (" << epochs << " epoch(s))" << std::endl;
+	std::cout << "speech commands training using libtorch library (" << epochs << " epoch(s))..." << std::endl;
 	speech_commands_libtorch(&training_set, &testing_set, epochs);
 
-	std::cout << "speech commands training using l-ten library (" << epochs << " epoch(s))" << std::endl;
+	std::cout << "speech commands training using l-ten library (" << epochs << " epoch(s))..." << std::endl;
 	speech_commands_lten(&training_set, &testing_set, epochs);
 
 	return 0;
