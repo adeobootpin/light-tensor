@@ -59,7 +59,7 @@ int neural_network_test()
 	Net net;
 	float* input_ptr;
 	float* target_ptr;
-	float lr = 0.0001f;
+	float lr = 0.0002f;
 
 	batch_size = 32;
 
@@ -111,6 +111,7 @@ int neural_network_test()
 	}
 
 	val = *((float*)loss.get_data_ptr());
+  printf("  loss: %f\n", val);
 	if (val < 50.0f)
 	{
 		return 0;

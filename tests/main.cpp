@@ -15,8 +15,6 @@ int main(int argc, char* argv[])
 	total_tests = 0;
 	total_tests_passed = 0;
 
-	PrintBuildInfo();
-
 	if (argc < 5)
 	{
 		printf("Usage: test path_to_MNIST_training_images path_to_MNIST_training_labels path_to_MNIST_test_images path_to_MNIST_test_labels [-gpu]\n");
@@ -42,6 +40,14 @@ int main(int argc, char* argv[])
 		}
 	}
 
+  if(run_on_gpu)
+  {
+    printf("running unit tests on GPU\n");
+  }
+  else
+  {
+    printf("running unit tests on CPU\n");
+  }
 	ret = add_test_1(run_on_gpu);
 	total_tests++;
 	if (ret)
@@ -263,12 +269,12 @@ int main(int argc, char* argv[])
 	total_tests++;
 	if (ret)
 	{
-		printf("tensor fully connected layer test failed\n");
+		printf("tensor fully-connected layer test failed\n");
 	}
 	else
 	{
 		total_tests_passed++;
-		printf("tensor fully connected layer passed\n");
+		printf("tensor fully-connected layer passed\n");
 	}
 
 	
