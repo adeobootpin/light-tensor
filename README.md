@@ -6,15 +6,16 @@
 
 #### Features
 - Auto differentiation
-
 - Popular network layer types
-
 - Popular optimizers
-
 - Similar API to libtorch
-
 - int8 quantization (linear layer only for now)
-
 - Python frontend coming soon
 
+#### Demos
+- Colab notebook demonstrating how to build the l-tensor library and run tests
+- UAV dynamics simulator
 
+#### Benchmarks
+- l-ten vs libtorch training and inference (MNIST)
+- l-ten vs libtorch training and infernece (Speech Commands)
