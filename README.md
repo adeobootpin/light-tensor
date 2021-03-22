@@ -20,4 +20,4 @@
 
 #### Benchmarks
 - l-ten vs libtorch training and inference (MNIST)
-- l-ten vs libtorch training and infernece (Speech Commands)
+- l-ten vs libtorch training and inference (Speech Commands)
