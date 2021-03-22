@@ -1,7 +1,7 @@
 # light-tensor framework (l-ten)
 
 ### Low overhead framework for fast neural network training
-### Fast efficient inference in production
+### Fast and efficient inference in production
 ### Faster than libtorch (the C++ backend for PyTorch)
 ### Quick turn-around on network architecture and hyper-parameter search
 
