@@ -5,16 +5,16 @@
 ### Quick turn-around on network architecture and hyper-parameter search
 
 #### Features
-*Auto differentiation
+- Auto differentiation
 
-*Popular network layer types
+- Popular network layer types
 
-*Popular optimizers
+- Popular optimizers
 
-*Similar API to libtorch
+- Similar API to libtorch
 
-*int8 quantization (linear layer only for now)
+- int8 quantization (linear layer only for now)
 
-*Python frontend coming soon
+- Python frontend coming soon
 
 
