@@ -14,7 +14,7 @@
 - Python frontend coming soon
 
 #### Demos
-- Colab notebook demonstrating how to build the l-tensor library and run tests
+- Build the l-tensor library and run tests
 - UAV dynamics simulator
 
 #### Benchmarks
