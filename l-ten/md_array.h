@@ -346,12 +346,12 @@ public:
 		}
 		data_ptr_ = nullptr;
 	}
-
-	Dtype& operator()(const uint64_t* dims, int ndims, bool broadcast = false) const
+	
+	Dtype& operator()(const uint64_t* dims, int ndims,  bool broadcast = false) const 
 	{
 		return data_ptr_[GetOffset(dims, ndims, broadcast)];
 	}
-
+	
 	Dtype* GetDataPtr() const
 	{
 		return data_ptr_;
@@ -363,9 +363,26 @@ public:
 	}
 
 
-
-	// fast custom accessor
+	// fast custom accessors
 	// 9x faster than operator()(std::initializer_list<int> indices)
+	Dtype& operator()(int dim_1, int dim_2, bool broadcast = false)
+	{
+		if (ndims_ != 2)
+		{
+			LTEN_ERR("Invalid number of input dims (must be 2)");
+		}
+
+		if (broadcast)
+		{
+			dim_1 = std::min(dim_1, (int)dims_array_[0] - 1);
+			dim_2 = std::min(dim_2, (int)dims_array_[1] - 1);
+		}
+
+		return data_ptr_[dim_1 * dims_array_[1] + dim_2];
+	}
+
+
+
 	Dtype& operator()(uint64_t dim_1, uint64_t dim_2, uint64_t dim_3, uint64_t dim_4, bool broadcast = false)
 	{
 		if (ndims_ != 4)
@@ -618,6 +635,30 @@ public:
 
 		return MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
 	}
+
+	MultiDimArray operator*(float scalar) const
+	{
+		MultiDimArray result;
+		uint64_t i;
+		Dtype* data;
+
+		result.Allocate(dims_array_, ndims_, nullptr, false);
+
+		data = result.GetDataPtr();
+
+		for (i = 0; i < numels_; i++)
+		{
+			data[i] = data_ptr_[i] * scalar;
+		}
+
+		return MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
+	}
+
+	friend MultiDimArray operator*(float scalar, const MultiDimArray& rhs)
+	{
+		return rhs * scalar;
+	}
+
 
 	MultiDimArray operator*(const MultiDimArray& other)
 	{
