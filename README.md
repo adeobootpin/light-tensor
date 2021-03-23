@@ -14,6 +14,20 @@
 - int8 quantization (linear layer only for now)
 - Python frontend coming soon
 
+#### Unit test build instructions (linux only)
+- Download the source code
+  *  use the code download button at the top of this page to get the source code
+- Download the MNIST data set
+  *  http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz
+  *  http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz
+  *  http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz
+  *  http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz
+  
+  Alternate MNIST download location: https://data.deepai.org/mnist.zip
+  
+- Download dependencies
+
+
 #### Demos
 - Build the l-tensor library and run tests
 - UAV dynamics simulator
