@@ -17,6 +17,8 @@
 #### Unit test build instructions (linux only)
 - Download the source code
   *  use the code download button at the top of this page to get the source code
+- Build the light-tensor library and unit tests
+  * change directory to the root of the downloaded repository (
 - Download the MNIST data set
   *  http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz
   *  http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz
