@@ -15,8 +15,10 @@
 - Python frontend coming soon
 
 #### Colab notebooks
-- l-ten vs libtorch training and inference (MNIST)
-- l-ten vs libtorch training and inference (Speech Commands)
+- unit tests
+- benchmarks
+  - l-ten vs libtorch training and inference (MNIST)
+  - l-ten vs libtorch training and inference (Speech Commands)
 
 #### Unit tests build instructions (linux only)
 - Download the source code
