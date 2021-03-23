@@ -84,5 +84,5 @@ namespace lten {
 		return Tensor(result);
 
 	}
-#endif
 } // namespace lten
+#endif
