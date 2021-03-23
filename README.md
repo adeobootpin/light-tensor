@@ -15,7 +15,7 @@
 - Python frontend coming soon
 
 #### Colab notebooks
-- unit tests [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://github.com/adeobootpin/light-tensor/blob/main/notebooks/benchmarks.ipynb)
+- [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://github.com/adeobootpin/light-tensor/blob/main/notebooks/benchmarks.ipynb) unit tests
 - benchmarks
   - l-ten vs libtorch training and inference (MNIST)
   - l-ten vs libtorch training and inference (Speech Commands)
