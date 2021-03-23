@@ -39,6 +39,8 @@
   * change directory to the folder into which you downloaded the source code
   * from the command line type ***make benchmarks***
 - Download the MNIST data set
+  https://data.deepai.org/mnist.zip
+- Download the MNIST data set
   htps://data.deepai.org/mnist.zip
 - Download the Speech Commands data set (pre-processed and converted to spectrograms)
   *  https://speechcommands.s3-us-west-2.amazonaws.com/speech_commands.zip
