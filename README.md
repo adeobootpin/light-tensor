@@ -18,16 +18,17 @@
 - Download the source code
   *  use the code download button at the top of this page to get the source code
 - Build the light-tensor library and unit tests
-  * change directory to the root of the downloaded repository (
+  * change directory to the folder into which you downloaded the source code
+  * from the command line type ***make unit-tests***
 - Download the MNIST data set
   *  http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz
   *  http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz
   *  http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz
   *  http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz
   
-  Alternate MNIST download location: https://data.deepai.org/mnist.zip
-  
-- Download dependencies
+  [Alternate MNIST download location: https://data.deepai.org/mnist.zip]
+ - Run the unit tests
+   *  from the command line type ***./test path_to_train-images-idx3-ubyte path_to_train-labels-idx1-ubyte path_to_t10k-images-idx3-ubyte path_to_t10k-labels-idx1-ubyte -cpu*** to run the CPU unit tests
 
 
 #### Demos
