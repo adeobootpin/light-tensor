@@ -17,8 +17,7 @@
 #### Colab notebooks
 - [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1IaCnNqV8m58uGBqW9KSij61eAydVZC4C) unit tests
 - benchmarks
-  - l-ten vs libtorch training and inference (MNIST)
-  - l-ten vs libtorch training and inference (Speech Commands)
+  * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adeobootpin/light-tensor/blob/add-license-1/l_ten_benchmarks.ipynb) l-ten vs libtorch training and inference (MNIST/Speech Commands)
 
 #### Unit tests build instructions (linux only)
 - Download the source code
