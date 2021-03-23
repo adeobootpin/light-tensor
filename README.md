@@ -15,9 +15,10 @@
 - Python frontend coming soon
 
 #### Colab notebooks
-- [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1IaCnNqV8m58uGBqW9KSij61eAydVZC4C) unit tests
-- benchmarks
-  * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adeobootpin/light-tensor/blob/add-license-1/l_ten_benchmarks.ipynb) benchmarks (l-ten vs libtorch)
+- unit tests
+- [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1IaCnNqV8m58uGBqW9KSij61eAydVZC4C)
+- benchmarks (l-ten vs libtorch)
+  * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adeobootpin/light-tensor/blob/add-license-1/l_ten_benchmarks.ipynb)
 
 #### Unit tests build instructions (linux only)
 - Download the source code
