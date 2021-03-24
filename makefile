@@ -5,13 +5,11 @@ USE_THREADPOOL=1
 USE_MEMORYPOOL=1
 
 CUDA_INCLUDE_DIR="/usr/local/cuda-10.1/include/"
-CUDNN_INCLUDE_DIR="/content/test/cuda/include/"
 OPEN_BLAS_INCLUDE_DIR="/usr/include/x86_64-linux-gnu/"
 LIBTORCH_INCLUDE_DIR1="/content/libtorch/include/"
 LIBTORCH_INCLUDE_DIR2="/content/libtorch/include/torch/csrc/api/include"
 
 CUDA_LIBS_DIR="/usr/local/cuda-10.1/lib64/"
-CUDNN_LIBS_DIR="/content/test/cuda/lib64/"
 OPEN_BLAS_LIBS_DIR="/usr/lib/x86_64-linux-gnu/openblas/"
 LIBTORCH_LIBS_DIR="/content/libtorch/lib/"
 
@@ -75,9 +73,9 @@ DEPENDS := $(patsubst %.cpp,%.d,$(LIB_CPP_FILES))
 
 ifeq ($(USE_CUDA), 1)
 LIB_OBJ_FILES+= $(LIB_CU_FILES:.cu=.cu.o)
-CXXFLAGS+=-I$(CUDA_INCLUDE_DIR) -I$(CUDNN_INCLUDE_DIR) -D"USE_CUDA"
+CXXFLAGS+=-I$(CUDA_INCLUDE_DIR) -D"USE_CUDA"
 LINK_LIBS+=$(CUDA_LIBS) $(CUDNN_LIBS)
-LIBS_DIR+=-L$(CUDNN_LIBS_DIR) -L$(CUDA_LIBS_DIR) -L"/usr/local/cuda/lib64/"
+LIBS_DIR+=-L$(CUDA_LIBS_DIR) -L"/usr/local/cuda/lib64/"
 NVCC_TARGETS=$(LIB_CU_FILES:.cu=.cu.o)
 NVCC_FLAGS+=-D"USE_CUDA"
 BENCHMARK_FLAGS+=-D"USE_CUDA"
