@@ -28,6 +28,7 @@
   *  use the code download button at the top of this page to get the source code
 - Build the light-tensor library and unit tests
   * change directory to the folder into which you downloaded the source code
+  * edit the makefile in the folder so that the source, include, library etc. folders are correct
   * from the command line type: *make unit-tests*
 - Download the MNIST data set
   https://data.deepai.org/mnist.zip
@@ -43,6 +44,7 @@
   *  use the code download button at the top of this page to get the source code
 - Build the light-tensor library and unit tests
   * change directory to the folder into which you downloaded the source code
+  * edit the makefile in the folder so that the source, include, library etc. folders are correct
   * from the command line type: *make benchmarks*
 - Download the MNIST data set
   https://data.deepai.org/mnist.zip
