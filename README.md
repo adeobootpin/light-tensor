@@ -14,11 +14,13 @@
 - int8 quantization (linear layer only for now)
 - Python frontend coming soon
 
+
 #### Colab notebooks
 - unit tests
   * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adeobootpin/light-tensor/blob/main/l_ten_unit_tests.ipynb)
 - benchmarks (l-ten vs libtorch)
   * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adeobootpin/light-tensor/blob/main/l_ten_benchmarks.ipynb)
+
 
 #### Unit tests build instructions (linux)
 - Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (newer versions should work but have not been tested)
