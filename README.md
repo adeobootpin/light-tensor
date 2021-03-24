@@ -15,7 +15,7 @@
 - Python frontend coming soon
 
 
-#### Colab notebooks
+#### Notebooks
 - unit tests
   * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adeobootpin/light-tensor/blob/main/l_ten_unit_tests.ipynb)
 - benchmarks (l-ten vs libtorch)
