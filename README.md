@@ -33,7 +33,7 @@
   https://data.deepai.org/mnist.zip
 - Uncompress the downloaded MNIST archive files
 - Run the unit tests
-   *  from the command line type ***test path_to_train-images-idx3-ubyte path_to_train-labels-idx1-ubyte path_to_t10k-images-idx3-ubyte path_to_t10k-labels-idx1-ubyte -cpu*** to run the CPU unit tests (replace ***path_to_xxx*** with the actual paths to the ***xxx*** MNIST files)
+   *  from the command line type: **test path_to_train-images-idx3-ubyte path_to_train-labels-idx1-ubyte path_to_t10k-images-idx3-ubyte path_to_t10k-labels-idx1-ubyte -cpu** to run the CPU unit tests (replace **path_to_xxx** with the actual paths to the **xxx** MNIST files)
    *  from the command line type ***test path_to_train-images-idx3-ubyte path_to_train-labels-idx1-ubyte path_to_t10k-images-idx3-ubyte path_to_t10k-labels-idx1-ubyte -gpu*** to run the GPU unit tests
 
 
