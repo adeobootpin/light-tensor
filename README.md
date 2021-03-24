@@ -22,9 +22,11 @@
 
 
 #### Unit tests build instructions (linux)
-- [optional] Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (newer versions should work but have not been tested)
-- [optional] Install OpenBLAS
-    sudo apt-get install libopenblas-dev
+- [optional] Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (if you plan to use a GPU)
+  - follow installation instructions from NVIDIA
+  - newer versions of CUDA and CUDNN should work but have not been tested
+- [optional] Install OpenBLAS 
+  - on Ubuntu: sudo apt-get install libopenblas-dev
 - Download the source code
   *  use the code download button at the top of this page to get the source code
 - Build the light-tensor library and unit tests
@@ -40,7 +42,11 @@
 
 
 #### Benchmarks build instructions (linux)
-- Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (newer versions should work but have not been tested)
+- [optional] Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (if you plan to use a GPU)
+  - follow installation instructions from NVIDIA
+  - newer versions of CUDA and CUDNN should work but have not been tested
+- [optional] Install OpenBLAS 
+  - on Ubuntu: sudo apt-get install libopenblas-dev
 - Download the source code
   *  use the code download button at the top of this page to get the source code
 - Build the light-tensor library and unit tests
