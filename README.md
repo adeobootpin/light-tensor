@@ -14,34 +14,36 @@
 - int8 quantization (linear layer only for now)
 - Python frontend coming soon
 
+
 #### Colab notebooks
 - unit tests
   * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adeobootpin/light-tensor/blob/main/l_ten_unit_tests.ipynb)
 - benchmarks (l-ten vs libtorch)
   * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adeobootpin/light-tensor/blob/main/l_ten_benchmarks.ipynb)
 
-#### Unit tests build instructions (linux only)
-- Install CUDA 10.1 and CUDNN 7 on a computer with an NVIDIA GPU
+
+#### Unit tests build instructions (linux)
+- Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (newer versions should work but have not been tested)
 - Download the source code
   *  use the code download button at the top of this page to get the source code
 - Build the light-tensor library and unit tests
   * change directory to the folder into which you downloaded the source code
-  * from the command line type ***make unit-tests***
+  * from the command line type: *make unit-tests*
 - Download the MNIST data set
   https://data.deepai.org/mnist.zip
 - Uncompress the downloaded MNIST archive files
 - Run the unit tests
-   *  from the command line type ***test path_to_train-images-idx3-ubyte path_to_train-labels-idx1-ubyte path_to_t10k-images-idx3-ubyte path_to_t10k-labels-idx1-ubyte -cpu*** to run the CPU unit tests (replace ***path_to_xxx*** with the actual paths to the ***xxx*** MNIST files)
-   *  from the command line type ***test path_to_train-images-idx3-ubyte path_to_train-labels-idx1-ubyte path_to_t10k-images-idx3-ubyte path_to_t10k-labels-idx1-ubyte -gpu*** to run the GPU unit tests
+   *  from the command line type: *test path_to_train-images-idx3-ubyte path_to_train-labels-idx1-ubyte path_to_t10k-images-idx3-ubyte path_to_t10k-labels-idx1-ubyte -cpu* to run the CPU unit tests (replace *path_to_xxx* with the actual paths to the *xxx* MNIST files)
+   *  from the command line type: *test path_to_train-images-idx3-ubyte path_to_train-labels-idx1-ubyte path_to_t10k-images-idx3-ubyte path_to_t10k-labels-idx1-ubyte -gpu* to run the GPU unit tests
 
 
-#### Benchmarks build instructions (l-tensor vs libtorch, linux only)
-- Install CUDA 10.1 and CUDNN 7 on a computer with an NVIDIA GPU
+#### Benchmarks build instructions (linux)
+- Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (newer versions should work but have not been tested)
 - Download the source code
   *  use the code download button at the top of this page to get the source code
 - Build the light-tensor library and unit tests
   * change directory to the folder into which you downloaded the source code
-  * from the command line type ***make benchmarks***
+  * from the command line type: *make benchmarks*
 - Download the MNIST data set
   https://data.deepai.org/mnist.zip
 - Download the Speech Commands data set (pre-processed and converted to spectrograms)
@@ -52,7 +54,7 @@
 - Uncompress the pre-processed Speech Commands archive file
 - Uncompress the libtorch archive file
 - Run the benchmarks
-  *  add the libtorch library to the library search path (e.g. export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/libtorch/lib)
-  *  from the command line type ***benchmark-mnist path_to_train-images-idx3-ubyte path_to_train-labels-idx1-ubyte path_to_t10k-images-idx3-ubyte path_to_t10k-labels-idx1-ubyte 20*** to run the MNIST benchmarks (replace ***path_to_xxx*** with the actual paths to the ***xxx*** MNIST files)
-  *  from the command line type ***benchmark-speech-cmds path_to_training_list.txt path_to_testing_list.txt speech_commands/ speech_commands/ 30*** to run the Speech Commands benchmark tests (replace ***path_to_xxx*** with the actual paths to the ***xxx*** files and replace ***speech_commands*** with the actual folder into which Speech Commands archive file was uncompressed into)
+  *  add the libtorch library to the library search path (e.g. *export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/libtorch/lib*)
+  *  from the command line type: *benchmark-mnist path_to_train-images-idx3-ubyte path_to_train-labels-idx1-ubyte path_to_t10k-images-idx3-ubyte path_to_t10k-labels-idx1-ubyte 20* to run the MNIST benchmarks (replace *path_to_xxx* with the actual paths to the *xxx* MNIST files)
+  *  from the command line type: *benchmark-speech-cmds path_to_training_list.txt path_to_testing_list.txt speech_commands/ speech_commands/ 30* to run the Speech Commands benchmark tests (replace *path_to_xxx* with the actual paths to the *xxx* files and replace *speech_commands* with the actual folder into which the Speech Commands archive file was uncompressed into)
 
