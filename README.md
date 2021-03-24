@@ -28,7 +28,7 @@
   *  use the code download button at the top of this page to get the source code
 - Build the light-tensor library and unit tests
   * change directory to the folder into which you downloaded the source code
-  * from the command line type: **make unit-tests**
+  * from the command line type: *make unit-tests*
 - Download the MNIST data set
   https://data.deepai.org/mnist.zip
 - Uncompress the downloaded MNIST archive files
