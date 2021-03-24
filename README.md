@@ -20,7 +20,7 @@
 - benchmarks (l-ten vs libtorch)
   * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adeobootpin/light-tensor/blob/main/l_ten_benchmarks.ipynb)
 
-#### Unit tests build instructions (linux only)
+#### Unit tests build instructions (linux)
 - Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (newer versions should work but have not been tested)
 - Download the source code
   *  use the code download button at the top of this page to get the source code
@@ -35,7 +35,7 @@
    *  from the command line type ***test path_to_train-images-idx3-ubyte path_to_train-labels-idx1-ubyte path_to_t10k-images-idx3-ubyte path_to_t10k-labels-idx1-ubyte -gpu*** to run the GPU unit tests
 
 
-#### Benchmarks build instructions (l-tensor vs libtorch, linux only)
+#### Benchmarks build instructions (linux)
 - Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (newer versions should work but have not been tested)
 - Download the source code
   *  use the code download button at the top of this page to get the source code
