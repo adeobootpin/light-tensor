@@ -23,7 +23,7 @@
 
 #### Unit tests build instructions (linux)
 - [optional] Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (if you plan to use a GPU)
-  - follow installation instructions from NVIDIA
+  - follow the installation instructions on the NVIDIA web pages
   - newer versions of CUDA and CUDNN should work but have not been tested
 - [optional] Install OpenBLAS 
   - on Ubuntu: sudo apt-get install libopenblas-dev
@@ -43,7 +43,7 @@
 
 #### Benchmarks build instructions (linux)
 - [optional] Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (if you plan to use a GPU)
-  - follow installation instructions from NVIDIA
+  - follow the installation instructions on the NVIDIA web pages
   - newer versions of CUDA and CUDNN should work but have not been tested
 - [optional] Install OpenBLAS 
   - on Ubuntu: sudo apt-get install libopenblas-dev
