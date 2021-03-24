@@ -10,8 +10,9 @@
 - Auto differentiation
 - Popular network layer types
 - Popular optimizers
-- Similar API to libtorch
 - int8 quantization (linear layer only for now)
+- Similar API to libtorch
+
 
 
 #### Notebooks
