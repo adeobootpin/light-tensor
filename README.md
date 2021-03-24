@@ -12,18 +12,19 @@
 - Popular optimizers
 - Similar API to libtorch
 - int8 quantization (linear layer only for now)
-- Python frontend coming soon
 
 
 #### Notebooks
-- unit tests
+- Unit tests
   * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adeobootpin/light-tensor/blob/main/l_ten_unit_tests.ipynb)
-- benchmarks (l-ten vs libtorch)
+- Benchmarks (l-ten vs libtorch)
   * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adeobootpin/light-tensor/blob/main/l_ten_benchmarks.ipynb)
 
 
 #### Unit tests build instructions (linux)
-- Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (newer versions should work but have not been tested)
+- [optional] Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (newer versions should work but have not been tested)
+- [optional] Install OpenBLAS
+    sudo apt-get install libopenblas-dev
 - Download the source code
   *  use the code download button at the top of this page to get the source code
 - Build the light-tensor library and unit tests
