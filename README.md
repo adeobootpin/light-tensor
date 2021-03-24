@@ -2,7 +2,7 @@
 
 ### Low overhead framework for fast neural network training
 ### Fast and efficient inference in production
-### Faster than libtorch (the C++ backend for PyTorch)
+### Faster GPU training and inference than libtorch (the C++ backend for PyTorch)
 ### Quick turn-around on network architecture and hyper-parameter experiments
 
 
