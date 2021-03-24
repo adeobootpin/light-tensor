@@ -7,6 +7,7 @@
 
 int main(int argc, char* argv[])
 {
+	int ret;
 	DATASET_DATA training_set;
 	DATASET_DATA testing_set;
 	int epochs = 30;
@@ -38,8 +39,16 @@ int main(int argc, char* argv[])
 
 	std::cout << "loading speech commands data set..." << std::endl;;
 
-	LoadDataset(speech_commands_training_list, speech_commands_training_dir, &training_set);
-	LoadDataset(speech_commands_testing_list, speech_commands_testing_dir, &testing_set);
+	ret = LoadDataset(speech_commands_training_list, speech_commands_training_dir, &training_set);
+	if(ret)
+	{
+		return -1;
+	}
+	ret = LoadDataset(speech_commands_testing_list, speech_commands_testing_dir, &testing_set);
+	if(ret)
+	{
+		return -1;
+	}
 
 	std::cout << "done [trainig examples: " << training_set.total_examples << " test examples: " << testing_set.total_examples << "]\n" << std::endl;
 
