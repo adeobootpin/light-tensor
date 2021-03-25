@@ -4,12 +4,12 @@ USE_OPENBLAS=1
 USE_THREADPOOL=1
 USE_MEMORYPOOL=1
 
-CUDA_INCLUDE_DIR="/usr/local/cuda-10.1/include/"
+CUDA_INCLUDE_DIR="/usr/local/cuda/include/"
 OPEN_BLAS_INCLUDE_DIR="/usr/include/x86_64-linux-gnu/"
 LIBTORCH_INCLUDE_DIR1="/content/libtorch/include/"
 LIBTORCH_INCLUDE_DIR2="/content/libtorch/include/torch/csrc/api/include"
 
-CUDA_LIBS_DIR="/usr/local/cuda-10.1/lib64/"
+CUDA_LIBS_DIR="/usr/local/cuda/lib64/"
 OPEN_BLAS_LIBS_DIR="/usr/lib/x86_64-linux-gnu/openblas/"
 LIBTORCH_LIBS_DIR="/content/libtorch/lib/"
 
