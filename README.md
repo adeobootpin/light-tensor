@@ -50,19 +50,19 @@
   - on Ubuntu: sudo apt-get install libopenblas-dev
 - Download the source code
   *  use the code download button at the top of this page to get the source code
+- Download the libtorch library (C++ backend for Pytorch)
+  *  https://download.pytorch.org/libtorch/cu102/libtorch-shared-with-deps-1.8.0.zip
+- Uncompress the libtorch archive file
 - Build the light-tensor library and unit tests
   * change directory to the folder into which you downloaded the source code
-  * edit the makefile in the folder so that the source, include, library etc. folders are correct
+  * edit the makefile in the folder so that the source, include, and library folders are correct
   * from the command line type: *make benchmarks*
 - Download the MNIST data set
   https://data.deepai.org/mnist.zip
 - Download the Speech Commands data set (pre-processed and converted to spectrograms)
   *  https://speechcommands.s3-us-west-2.amazonaws.com/speech_commands.zip
-- Download the libtorch library (C++ backend for Pytorch)
-  *  https://download.pytorch.org/libtorch/cu102/libtorch-shared-with-deps-1.8.0.zip
 - Uncompress the downloaded MNIST archive files
 - Uncompress the pre-processed Speech Commands archive file
-- Uncompress the libtorch archive file
 - Run the benchmarks
   *  add the libtorch library to the library search path (e.g. *export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/libtorch/lib*)
   *  from the command line type: *benchmark-mnist path_to_train-images-idx3-ubyte path_to_train-labels-idx1-ubyte path_to_t10k-images-idx3-ubyte path_to_t10k-labels-idx1-ubyte 20* to run the MNIST benchmarks 
