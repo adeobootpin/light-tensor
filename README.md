@@ -2,7 +2,7 @@
 
 ### Low overhead framework for fast neural network training
 ### Fast and efficient inference in production
-### Faster than libtorch (the C++ backend for PyTorch)
+### Faster GPU training and inference than libtorch (the C++ backend for PyTorch)
 ### Quick turn-around on network architecture and hyper-parameter experiments
 
 
@@ -10,20 +10,24 @@
 - Auto differentiation
 - Popular network layer types
 - Popular optimizers
-- Similar API to libtorch
 - int8 quantization (linear layer only for now)
-- Python frontend coming soon
+- Similar API to libtorch
+
 
 
 #### Notebooks
-- unit tests
+- Unit tests
   * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adeobootpin/light-tensor/blob/main/l_ten_unit_tests.ipynb)
-- benchmarks (l-ten vs libtorch)
+- Benchmarks (l-ten vs libtorch)
   * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adeobootpin/light-tensor/blob/main/l_ten_benchmarks.ipynb)
 
 
 #### Unit tests build instructions (linux)
-- Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (newer versions should work but have not been tested)
+- [Optional] Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (if you plan to use a GPU)
+  - follow the installation instructions on the NVIDIA web pages
+  - newer versions of CUDA and CUDNN should work but have not been tested
+- [Optional] Install OpenBLAS 
+  - on Ubuntu: sudo apt-get install libopenblas-dev
 - Download the source code
   *  use the code download button at the top of this page to get the source code
 - Build the light-tensor library and unit tests
@@ -39,7 +43,11 @@
 
 
 #### Benchmarks build instructions (linux)
-- Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (newer versions should work but have not been tested)
+- [Optional] Install CUDA 10.1 and CUDNN 7.6.3 on a computer with an NVIDIA GPU (if you plan to use a GPU)
+  - follow the installation instructions on the NVIDIA web pages
+  - newer versions of CUDA and CUDNN should work but have not been tested
+- [Optional] Install OpenBLAS 
+  - on Ubuntu: sudo apt-get install libopenblas-dev
 - Download the source code
   *  use the code download button at the top of this page to get the source code
 - Build the light-tensor library and unit tests
