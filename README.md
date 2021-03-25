@@ -55,7 +55,7 @@
 - Uncompress the libtorch archive file
 - Build the light-tensor library and unit tests
   * change directory to the folder into which you downloaded the source code
-  * edit the makefile in the folder so that the source, include, and library folders are correct
+  * edit the *makefile* in this folder so that the source, include, and library folders are correct
   * from the command line type: *make benchmarks*
 - Download the MNIST data set
   https://data.deepai.org/mnist.zip
