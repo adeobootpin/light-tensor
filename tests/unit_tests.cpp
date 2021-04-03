@@ -1,7 +1,6 @@
 #include <iostream>
 #include <chrono>
-#include "tensor.h"
-#include "layers.h"
+#include "lten.h"
 
 template<typename Dtype>
 int Compare(Dtype* A, Dtype* B, uint64_t len, Dtype error = 0)

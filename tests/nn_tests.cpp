@@ -1,10 +1,7 @@
 #include <iostream>
 #include <chrono>
 #include <float.h>
-#include "tensor.h"
-#include "layers.h"
-#include "net.h"
-#include "optimizer.h"
+#include "lten.h"
 
 
 int LoadMNISTImages(const char* pchFileName, float** ppfImages, int* piTotalImages);
