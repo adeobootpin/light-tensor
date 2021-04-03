@@ -274,7 +274,7 @@ int main(int argc, char* argv[])
 	else
 	{
 		total_tests_passed++;
-		printf("tensor fully-connected layer passed\n");
+		printf("tensor fully-connected layer test passed\n");
 	}
 
 	
