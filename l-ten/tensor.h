@@ -54,6 +54,7 @@ namespace lten {
 		const uint64_t get_numels() { return smart_ptr_->get_numels(); }
 		void set_autograd(bool setting) { smart_ptr_->set_autograd(setting); }
 		const uint64_t* get_sizes() { return smart_ptr_->get_sizes(); }
+		const uint64_t* get_strides() { return smart_ptr_->get_strides(); }
 		void backward(MultiDimArray<float>* top_gradient = nullptr) { smart_ptr_->backward(top_gradient); }
 		void clear_gradients() { smart_ptr_->clear_gradients(); }
 		int get_ndims() const { return smart_ptr_->get_ndims(); }
@@ -879,6 +880,57 @@ namespace lten {
 		friend Tensor operator*(float scalar, Tensor& rhs)
 		{
 			return rhs * scalar;
+		}
+
+		Tensor cat(const Tensor& other, int dim = 0)
+		{
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				resultImpl->cat(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<float>*>(other.smart_ptr_.get_real_object()), dim);
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					resultImpl->cat(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<int>*>(other.smart_ptr_.get_real_object()), dim);
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						resultImpl->cat(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<uint8_t>*>(other.smart_ptr_.get_real_object()), dim);
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
 		}
 
 		Tensor reshape(const std::initializer_list<uint64_t>& dims)

@@ -4,7 +4,6 @@
 
 namespace lten {
 
-
 template<typename Dtype>
 int TensorImpl<Dtype>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_memory, TensorOps* options_ptr)
 {
@@ -1442,6 +1441,78 @@ void TensorImpl<Dtype>::div(TensorImpl<Dtype>& operand1, TensorImpl<Dtype>& oper
 }
 
 
+// tensor concatenation
+template<typename Dtype>
+void TensorImpl<Dtype>::cat(TensorImpl<Dtype>& operand1, TensorImpl<Dtype>& operand2, int dim)
+{
+	MultiDimArray<Dtype>* op1_md_array;
+	MultiDimArray<Dtype>* op2_md_array;
+	TensorOps options;
+
+
+
+	if (operand1.get_ndims() != operand2.get_ndims())
+	{
+		LTEN_ERR("Tensors must have the same number of dimensions");
+	}
+
+	if (operand1.get_device() != operand2.get_device() ||
+		operand1.get_device_index() != operand2.get_device_index() ||
+		operand1.get_data_type() != operand2.get_data_type())
+	{
+		LTEN_ERR("Input tensors have different device type, device indices or data type");
+	}
+
+	options.data_type = operand1.get_data_type();
+	options.device_type = operand1.get_device();
+	options.device_index = operand1.get_device_index();
+
+	op1_md_array = operand1.get_mdarray();
+	op2_md_array = operand2.get_mdarray();
+
+
+	if (options.device_type == CPU)
+	{
+		MultiDimArray<Dtype> result;
+
+		result = (*op1_md_array).cat(*op2_md_array, dim);
+
+		LTEN_ERR_CHECK(allocate_from_buffer(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true, &options));
+		result.SetMemoryOwnership(false); // this TensorImpl<Dtype> needs to keep the md_array's buffer so set ownership accordingly
+	}
+	else
+	{
+		if (options.device_type == GPU)
+		{
+#ifdef USE_CUDA
+			CUDA_MultiDimArray<Dtype> result;
+
+			result = (*(static_cast<CUDA_MultiDimArray<Dtype>*>(op1_md_array))).cat(*(static_cast<CUDA_MultiDimArray<Dtype>*>(op2_md_array)), dim);
+
+			LTEN_ERR_CHECK(allocate_from_buffer(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true, &options));
+			result.SetMemoryOwnership(false); // this TensorImpl<Dtype> needs to keep the md_array's buffer so set ownership accordingly
+#else
+			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+		}
+		else
+		{
+			LTEN_ERR("Invalid tensor device type");
+		}
+	}
+
+	if (operand1.autograd_on() || operand2.autograd_on())
+	{
+		misc1_ = dim; // save this for back prop
+
+		add_child(operand1);
+		add_child(operand2);
+		grad_fn_ = ::cat_backward;
+		set_autograd(true);
+	}
+
+}
+
 template<typename Dtype>
 void TensorImpl<Dtype>::squeeze(TensorImpl<Dtype>& operand1, int dim)
 {
@@ -1590,9 +1661,11 @@ void TensorImpl<Dtype>::transpose(TensorImpl& operand1, int dim1, int dim2)
 			strides = operand1.get_mdarray()->GetStrides();
 			strides_transp = get_mdarray()->GetStrides();
 
+			
 			gpu_transpose(static_cast<Dtype*>(operand1.get_data_ptr()), static_cast<Dtype*>(get_data_ptr()), dim1, dim2,
 				(int)strides[dim1], (int)strides[dim1 - 1], (int)strides[dim2], (int)strides[dim2 - 1],
 				(int)strides_transp[dim1], (int)strides_transp[dim1 - 1], (int)strides_transp[dim2], (int)strides_transp[dim2 - 1], operand1.get_numels());
+					
 
 #else
 			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
@@ -1747,6 +1820,7 @@ template void TensorImpl<float>::add_child(TensorImpl<float>& child);
 template void TensorImpl<float>::add(TensorImpl<float>& lhs, TensorImpl<float>& rhs);
 template void TensorImpl<float>::sub(TensorImpl<float>& lhs, TensorImpl<float>& rhs);
 template void TensorImpl<float>::div(TensorImpl<float>& operand1, TensorImpl<float>& operand2);
+template void TensorImpl<float>::cat(TensorImpl<float>& operand1, TensorImpl<float>& operand2, int dim);
 template void TensorImpl<float>::exp(TensorImpl<float>& operand1);
 template void TensorImpl<float>::max(TensorImpl<float>& operand1);
 template void TensorImpl<float>::max(TensorImpl<float>& operand1, int dim);
@@ -1775,6 +1849,7 @@ template void TensorImpl<int>::add_child(TensorImpl<int>& child);
 template void TensorImpl<int>::add(TensorImpl<int>& lhs, TensorImpl<int>& rhs);
 template void TensorImpl<int>::sub(TensorImpl<int>& lhs, TensorImpl<int>& rhs);
 template void TensorImpl<int>::div(TensorImpl<int>& operand1, TensorImpl<int>& operand2);
+template void TensorImpl<int>::cat(TensorImpl<int>& operand1, TensorImpl<int>& operand2, int dim);
 template void TensorImpl<int>::exp(TensorImpl<int>& operand1);
 template void TensorImpl<int>::max(TensorImpl<int>& operand1);
 template void TensorImpl<int>::max(TensorImpl<int>& operand1, int dim);
@@ -1803,6 +1878,7 @@ template void TensorImpl<uint8_t>::add_child(TensorImpl<uint8_t>& child);
 template void TensorImpl<uint8_t>::add(TensorImpl<uint8_t>& lhs, TensorImpl<uint8_t>& rhs);
 template void TensorImpl<uint8_t>::sub(TensorImpl<uint8_t>& lhs, TensorImpl<uint8_t>& rhs);
 template void TensorImpl<uint8_t>::div(TensorImpl<uint8_t>& operand1, TensorImpl<uint8_t>& operand2);
+template void TensorImpl<uint8_t>::cat(TensorImpl<uint8_t>& operand1, TensorImpl<uint8_t>& operand2, int dim);
 template void TensorImpl<uint8_t>::exp(TensorImpl<uint8_t>& operand1);
 template void TensorImpl<uint8_t>::max(TensorImpl<uint8_t>& operand1);
 template void TensorImpl<uint8_t>::max(TensorImpl<uint8_t>& operand1, int dim);
