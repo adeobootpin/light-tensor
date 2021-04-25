@@ -32,6 +32,7 @@ LIB_CPP_FILES= \
 	$(LIB_SRC_DIR)/conv2d.cpp \
 	$(LIB_SRC_DIR)/dropout.cpp \
 	$(LIB_SRC_DIR)/fully_connected.cpp \
+	$(LIB_SRC_DIR)/globals.cpp \
 	$(LIB_SRC_DIR)/gru.cpp \
 	$(LIB_SRC_DIR)/layers.cpp \
 	$(LIB_SRC_DIR)/math_fns.cpp \
