@@ -908,6 +908,125 @@ public:
 		return MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
 	}
 
+	MultiDimArray cat(const MultiDimArray& other, int dim)
+	{
+		MultiDimArray result;
+		uint64_t dims_result[MAX_DIMS];
+		int i;
+		const uint64_t* other_dims_array;
+		const uint64_t* other_strides_array;
+		const uint64_t* result_strides_array;
+		Dtype* other_data_ptr;
+		uint64_t other_numels;
+		uint64_t index;
+		uint64_t cat_index;
+		uint64_t dim_offset;
+		Dtype* data;
+		
+
+		if (ndims_ != other.GetNDims())
+		{
+			LTEN_ERR("MultiDimArrays must have the same number of dimensions");
+		}
+
+		other_dims_array = other.GetSizes();
+		for (i = 0; i < ndims_; i++)
+		{
+			if (i != dim)
+			{
+				if (dims_array_[i] != other_dims_array[i])
+				{
+					LTEN_ERR("MultiDimArrays must have compatiple dimensions");
+				}
+				dims_result[i] = dims_array_[i];
+			}
+			else
+			{
+				dims_result[i] = dims_array_[i] + other_dims_array[i];
+			}
+		}
+
+		result.Allocate(dims_result, ndims_, nullptr, false);
+
+		result_strides_array = result.GetStrides();
+		//---------------------------------------------------------------------------------------------
+		// alternative solution 
+		//---------------------------------------------------------------------------------------------
+		/*
+		uint64_t coordinates[MAX_DIMS];
+		for (index = 0; index < numels_; index++)
+		{
+			CoordinatesFromIndex(index, dims_array_, strides_array_, coordinates, ndims_);
+			result(coordinates, ndims_) = data_ptr_[index];
+		}
+
+		dim_offset = dims_array_[dim];
+		other_numels = other.GetNumels();
+		other_strides_array = other.GetStrides();
+		other_data_ptr = other.GetDataPtr();
+
+		for (index = 0; index < other_numels; index++)
+		{
+			CoordinatesFromIndex(index, other_dims_array, other_strides_array, coordinates, ndims_);
+			coordinates[dim] += dim_offset;
+			result(coordinates, ndims_) = other_data_ptr[index];
+		}
+		*/
+		//---------------------------------------------------------------------------------------------
+
+		data = result.GetDataPtr();
+		for (index = 0; index < numels_; index++)
+		{
+			uint64_t quotient;
+			uint64_t remainder;
+
+			if (dim > 0)
+			{
+				quotient = index / strides_array_[dim - 1];
+				remainder = index % strides_array_[dim - 1];
+				cat_index = quotient * result_strides_array[dim - 1] + remainder;
+			}
+			else
+			{
+				cat_index = index;
+			}
+
+			data[cat_index] = data_ptr_[index];
+		}
+
+		uint64_t axis_coord;
+
+
+		dim_offset = dims_array_[dim];
+		other_numels = other.GetNumels();
+		other_strides_array = other.GetStrides();
+		other_data_ptr = other.GetDataPtr();
+
+
+		for (index = 0; index < other_numels; index++)
+		{
+			uint64_t quotient;
+			uint64_t remainder;
+
+			if (dim > 0)
+			{
+				quotient = index / other_strides_array[dim - 1];
+				remainder = index % other_strides_array[dim - 1];
+				axis_coord = remainder / other_strides_array[dim]; // axis_dim is other's coordinate in dimension dim
+				remainder = remainder % other_strides_array[dim];
+				cat_index = quotient * result_strides_array[dim - 1] + (axis_coord + dim_offset) * result_strides_array[dim] + remainder;
+			}
+			else
+			{
+				cat_index = index + numels_;
+			}
+
+			data[cat_index] = other_data_ptr[index];
+		}
+
+		return MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
+	}
+
 	MultiDimArray transpose(int dim_1, int dim_2)
 	{
 		MultiDimArray result;

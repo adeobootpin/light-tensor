@@ -513,6 +513,72 @@ public:
 		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
 	}
 
+	CUDA_MultiDimArray cat(const CUDA_MultiDimArray& other, int dim)
+	{
+		CUDA_MultiDimArray result;
+		uint64_t dims_result[MAX_DIMS];
+		int i;
+		const uint64_t* other_dims_array;
+		const uint64_t* other_strides_array;
+		const uint64_t* result_strides_array;
+		Dtype* other_data_ptr;
+		uint64_t other_numels;
+		uint64_t dim_offset;
+		Dtype* data;
+
+
+		if (ndims_ != other.GetNDims())
+		{
+			LTEN_ERR("MultiDimArrays must have the same number of dimensions");
+		}
+
+		other_dims_array = other.GetSizes();
+		for (i = 0; i < ndims_; i++)
+		{
+			if (i != dim)
+			{
+				if (dims_array_[i] != other_dims_array[i])
+				{
+					LTEN_ERR("MultiDimArrays must have compatiple dimensions");
+				}
+				dims_result[i] = dims_array_[i];
+			}
+			else
+			{
+				dims_result[i] = dims_array_[i] + other_dims_array[i];
+			}
+		}
+
+		result.Allocate(dims_result, ndims_, nullptr, false);
+
+		result_strides_array = result.GetStrides();
+
+		data = result.GetDataPtr();
+		other_data_ptr = other.GetDataPtr();
+
+		result_strides_array[dim - 1];
+		strides_array_[dim - 1];
+		other_strides_array[dim - 1];
+		other_strides_array[dim];
+
+		dim_offset = dims_array_[dim];
+		other_numels = other.GetNumels();
+		other_strides_array = other.GetStrides();
+
+		if (dim > 0)
+		{
+			gpu_cat(result.GetDataPtr(), data_ptr_, other.GetDataPtr(), result_strides_array[dim - 1], result_strides_array[dim], strides_array_[dim - 1], other_strides_array[dim - 1], other_strides_array[dim], dim_offset, numels_, other.GetNumels());
+		}
+		else
+		{
+			gpu_cat(result.GetDataPtr(), data_ptr_, other.GetDataPtr(), 0, 0, 0, 0, 0, dim_offset, numels_, other.GetNumels());
+		}
+
+
+		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
+
+	}
+
 	using MultiDimArray<Dtype>::ndims_;
 	using MultiDimArray<Dtype>::numels_;
 	using MultiDimArray<Dtype>::own_memory_;
