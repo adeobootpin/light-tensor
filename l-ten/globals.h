@@ -11,6 +11,7 @@
 
 namespace lten {
 
+	class Tensor;
 	const int MAX_DEVICES = 8;
 
 	struct MISC_globals
@@ -19,6 +20,12 @@ namespace lten {
 		{
 			return &misc_globals_;
 		}
+
+		static Tensor* get_null_tensor()
+		{
+			return &null_tensor_;
+		}
+
 #ifdef USE_THREADPOOL
 		static ThreadPool* get_threadpool()
 		{
@@ -66,6 +73,7 @@ namespace lten {
 	private:
 		MISC_globals() {}
 		static MISC_globals misc_globals_;
+		static Tensor null_tensor_;
 #ifdef USE_THREADPOOL
 		static ThreadPool* threadpool_;
 #endif
