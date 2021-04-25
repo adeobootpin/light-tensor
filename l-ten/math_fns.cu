@@ -1343,7 +1343,6 @@ __global__ void gpu_transpose_kernel(Dtype* src, Dtype* dst, int dim_1, int dim_
 
 	int coord1;
 	int coord2;
-	float temp;
 
 	idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -1389,9 +1388,7 @@ __global__ void gpu_transpose_kernel(Dtype* src, Dtype* dst, int dim_1, int dim_
 
 		idx_transpose += coord2 * stride_trn_dim_1 + coord1 * stride_trn_dim_2;
 
-		temp = src[idx];
-		src[idx] = dst[idx_transpose];
-		dst[idx_transpose] = temp;
+		dst[idx_transpose] = src[idx];
 	}
 
 }
@@ -1414,6 +1411,233 @@ void gpu_transpose(Dtype* src, Dtype* dst, int dim_1, int dim_2,
 
 }
 
+
+template<typename Dtype>
+__global__ void gpu_cat_kernel_1(Dtype* dest, Dtype* op1, uint64_t dest_stride, uint64_t op1_stride, uint64_t op1_numels)
+{
+	uint64_t index;
+	uint64_t quotient;
+	uint64_t remainder;
+	uint64_t cat_index;
+
+	index = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (index < op1_numels)
+	{
+		if (dest_stride > 0)
+		{
+			quotient = index / op1_stride;
+			remainder = index % op1_stride;
+			cat_index = quotient * dest_stride + remainder;
+		}
+		else
+		{
+			cat_index = index;
+		}
+		
+		dest[cat_index] = op1[index];
+	}
+}
+
+template<typename Dtype>
+__global__ void gpu_cat_kernel_2(Dtype* dest, Dtype* op2, uint64_t dest_stride1, uint64_t dest_stride2, uint64_t op2_stride_1, uint64_t op2_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t op2_numels)
+{
+	uint64_t index;
+	uint64_t quotient;
+	uint64_t remainder;
+	uint64_t cat_index;
+	uint64_t axis_coord;
+
+	index = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (index < op2_numels)
+	{
+		if (dest_stride1 > 0)
+		{
+			quotient = index / op2_stride_1;
+			remainder = index % op2_stride_1;
+			axis_coord = remainder / op2_stride_2; // axis_dim is other's coordinate in dimension dim
+			remainder = remainder % op2_stride_2;
+			cat_index = quotient * dest_stride1 + (axis_coord + dim_offset) * dest_stride2 + remainder;
+		}
+		else
+		{
+			cat_index = index + op1_numels;
+		}
+
+		dest[cat_index] = op2[index];
+	}
+}
+
+
+template<typename Dtype>
+void gpu_cat(Dtype* dest, Dtype* op1, Dtype* op2, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t op1_stride, uint64_t op2_stride_1, uint64_t op2_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t op2_numels)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(op1_numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+
+	gpu_cat_kernel_1 << <num_blocks, DEFA_THREADS >> > (dest, op1, dest_stride_1, op1_stride, op1_numels);
+
+
+	num_blocks = (static_cast<int>(op2_numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+	gpu_cat_kernel_2 << <num_blocks, DEFA_THREADS >> > (dest, op2, dest_stride_1, dest_stride_2, op2_stride_1, op2_stride_2, dim_offset, op1_numels, op2_numels);
+
+}
+
+
+
+template<typename Dtype>
+__global__ void gpu_cat_backward_kernel(Dtype* dest, Dtype* src, uint64_t dest_stride, uint64_t src_stride, uint64_t dest_numels)
+{
+	uint64_t index;
+	uint64_t quotient;
+	uint64_t remainder;
+	uint64_t cat_index;
+
+	index = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (index < dest_numels)
+	{
+		if (dest_stride > 0)
+		{
+			quotient = index / dest_stride;
+			remainder = index % dest_stride;
+			cat_index = quotient * src_stride + remainder;
+		}
+		else
+		{
+			cat_index = index;
+		}
+
+		dest[index] = src[cat_index];
+	}
+}
+
+template<typename Dtype>
+void gpu_cat_backward(Dtype* dest, Dtype* src, uint64_t dest_stride, uint64_t src_stride, uint64_t dest_numels)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(dest_numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+
+	gpu_cat_backward_kernel << <num_blocks, DEFA_THREADS >> > (dest, src, dest_stride, src_stride, dest_numels);
+}
+
+
+template<typename Dtype>
+__global__ void gpu_cat_backward_kernel(Dtype* dest, Dtype* src, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t src_stride_1, uint64_t src_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t dest_numels)
+{
+	uint64_t index;
+	uint64_t quotient;
+	uint64_t remainder;
+	uint64_t cat_index;
+	uint64_t axis_coord;
+
+	index = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (index < dest_numels)
+	{
+		if (dest_stride_1 > 0)
+		{
+			quotient = index / dest_stride_1;
+			remainder = index % dest_stride_1;
+			axis_coord = remainder / dest_stride_2; // axis_dim is other's coordinate in dimension dim
+			remainder = remainder % dest_stride_2;
+			cat_index = quotient * src_stride_1 + (axis_coord + dim_offset) * src_stride_2 + remainder;
+		}
+		else
+		{
+			cat_index = index + op1_numels;
+		}
+
+		dest[index] = src[cat_index];
+	}
+}
+
+template<typename Dtype>
+void gpu_cat_backward(Dtype* dest, Dtype* src, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t src_stride_1, uint64_t src_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t dest_numels)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(dest_numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+
+	gpu_cat_backward_kernel << <num_blocks, DEFA_THREADS >> > (dest, src, dest_stride_1, dest_stride_2, src_stride_1, src_stride_2, dim_offset, op1_numels, dest_numels);
+
+}
+
+
+
+template<typename Dtype>
+__global__ void gpu_embedding_kernel(Dtype* dst, Dtype* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim)
+{
+	uint64_t i;
+	uint64_t j;
+	uint64_t k;
+	uint64_t rem;
+	uint64_t offs;
+	unsigned int index;
+
+	i = blockIdx.x * blockDim.x + threadIdx.x;
+	if (i < numels)
+	{
+		j = i / (indices_per_batch * embedding_dim);
+		rem = i % (indices_per_batch * embedding_dim);
+		k = rem / embedding_dim;
+		offs = rem % embedding_dim;
+
+		index = indices[j * indices_per_batch + k];
+
+		dst[j * (indices_per_batch * embedding_dim) + k * embedding_dim + offs] = wts[index * embedding_dim + offs];
+
+	}
+}
+
+
+template<typename Dtype>
+void gpu_embedding(Dtype* dst, Dtype* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+
+	gpu_embedding_kernel << <num_blocks, DEFA_THREADS >> > (dst, wts, indices, numels, indices_per_batch, embedding_dim);
+}
+
+
+__global__ void gpu_embedding_backward_kernel(float* dst, float* grad, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim)
+{
+	uint64_t i;
+	uint64_t j;
+	uint64_t k;
+	uint64_t rem;
+	uint64_t offs;
+	unsigned int index;
+
+	i = blockIdx.x * blockDim.x + threadIdx.x;
+	if (i < numels)
+	{
+		j = i / (indices_per_batch * embedding_dim);
+		rem = i % (indices_per_batch * embedding_dim);
+		k = rem / embedding_dim;
+		offs = rem % embedding_dim;
+
+		index = indices[j * indices_per_batch + k];
+
+		atomicAdd(&dst[index * embedding_dim + offs], grad[j * (indices_per_batch * embedding_dim) + k * embedding_dim + offs]);
+		//dst[index * embedding_dim + offs] += grad[j * (indices_per_batch * embedding_dim) + k * embedding_dim + offs];
+	}
+}
+
+template<typename Dtype>
+void gpu_embedding_backward(Dtype* dst, Dtype* grad, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+
+	gpu_embedding_backward_kernel << <num_blocks, DEFA_THREADS >> > ((float*)dst, (float*)grad, indices, numels, indices_per_batch, embedding_dim);
+}
 
 
 
@@ -1448,6 +1672,12 @@ template void gpu_relu<float>(float* dst, float* src, uint64_t len);
 template void gpu_relu_backward<float>(float* bottom, const float* top, const float* middle, const uint64_t len);
 template void gpu_dropout<float>(float* dst, float* src, unsigned int* mask, unsigned int threshold, float scale, uint64_t len);
 template void gpu_transpose<float>(float* src, float* dst, int dim_1, int dim_2, int stride_src_dim_1, int stride_src_dim_1_minus_1, int stride_src_dim_2, int stride_src_dim_2_minus_1, int stride_trn_dim_1, int stride_trn_dim_1_minus_1, int stride_trn_dim_2, int stride_trn_dim_2_minus_1, uint64_t numels);
+template void gpu_cat<float>(float* dest, float* op1, float* op2, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t op1_stride, uint64_t op2_stride_1, uint64_t op2_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t op2_numels);
+template void gpu_cat_backward<float>(float* dest, float* src, uint64_t dest_stride, uint64_t src_stride, uint64_t dest_numels);
+template void gpu_cat_backward<float>(float* dest, float* src, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t src_stride_1, uint64_t src_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t dest_numels);
+template void gpu_embedding<float>(float* dst, float* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
+template void gpu_embedding_backward<float>(float* dst, float* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
+
 
 template void gpu_sum<int>(int* A, int* B, int* C, uint64_t height_A, uint64_t width_A, uint64_t height_B, uint64_t width_B);
 template void gpu_sub<int>(int* A, int* B, int* C, uint64_t height_A, uint64_t width_A, uint64_t height_B, uint64_t width_B);
@@ -1480,6 +1710,11 @@ template void gpu_relu<int>(int* dst, int* src, uint64_t len);
 template void gpu_relu_backward<int>(int* bottom, const int* top, const int* middle, const uint64_t len);
 template void gpu_dropout<int>(int* dst, int* src, unsigned int* mask, unsigned int threshold, int scale, uint64_t len);
 template void gpu_transpose<int>(int* src, int* dst, int dim_1, int dim_2, int stride_src_dim_1, int stride_src_dim_1_minus_1, int stride_src_dim_2, int stride_src_dim_2_minus_1, int stride_trn_dim_1, int stride_trn_dim_1_minus_1, int stride_trn_dim_2, int stride_trn_dim_2_minus_1, uint64_t numels);
+template void gpu_cat<int>(int* dest, int* op1, int* op2, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t op1_stride, uint64_t op2_stride_1, uint64_t op2_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t op2_numels);
+template void gpu_cat_backward<int>(int* dest, int* src, uint64_t dest_stride, uint64_t src_stride, uint64_t dest_numels);
+template void gpu_cat_backward<int>(int* dest, int* src, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t src_stride_1, uint64_t src_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t dest_numels);
+template void gpu_embedding<int>(int* dst, int* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
+template void gpu_embedding_backward<int>(int* dst, int* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
 
 template void gpu_sum<uint8_t>(uint8_t* A, uint8_t* B, uint8_t* C, uint64_t height_A, uint64_t width_A, uint64_t height_B, uint64_t width_B);
 template void gpu_sub<uint8_t>(uint8_t* A, uint8_t* B, uint8_t* C, uint64_t height_A, uint64_t width_A, uint64_t height_B, uint64_t width_B);
@@ -1512,3 +1747,8 @@ template void gpu_relu<uint8_t>(uint8_t* dst, uint8_t* src, uint64_t len);
 template void gpu_relu_backward<uint8_t>(uint8_t* bottom, const uint8_t* top, const uint8_t* middle, const uint64_t len);
 template void gpu_dropout<uint8_t>(uint8_t* dst, uint8_t* src, unsigned int* mask, unsigned int threshold, uint8_t scale, uint64_t len);
 template void gpu_transpose<uint8_t>(uint8_t* src, uint8_t* dst, int dim_1, int dim_2, int stride_src_dim_1, int stride_src_dim_1_minus_1, int stride_src_dim_2, int stride_src_dim_2_minus_1, int stride_trn_dim_1, int stride_trn_dim_1_minus_1, int stride_trn_dim_2, int stride_trn_dim_2_minus_1, uint64_t numels);
+template void gpu_cat<uint8_t>(uint8_t* dest, uint8_t* op1, uint8_t* op2, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t op1_stride, uint64_t op2_stride_1, uint64_t op2_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t op2_numels);
+template void gpu_cat_backward<uint8_t>(uint8_t* dest, uint8_t* src, uint64_t dest_stride, uint64_t src_stride, uint64_t dest_numels);
+template void gpu_cat_backward<uint8_t>(uint8_t* dest, uint8_t* src, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t src_stride_1, uint64_t src_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t dest_numels);
+template void gpu_embedding<uint8_t>(uint8_t* dst, uint8_t* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
+template void gpu_embedding_backward<uint8_t>(uint8_t* dst, uint8_t* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);

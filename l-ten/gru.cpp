@@ -1060,7 +1060,7 @@ namespace lten {
 	}
 
 
-	Tensor GRU_CUDNN::forward(Tensor& input)
+	Tensor GRU_CUDNN::forward(Tensor& input, Tensor& h0)
 	{
 		uint64_t sequence_len;
 		unsigned int batches;
@@ -1237,7 +1237,7 @@ namespace lten {
 				xDesc_,
 				input.get_data_ptr(), // x
 				hxDesc_,
-				nullptr, //hx
+				(&h0 == lten::MISC_globals::singleton()->get_null_tensor()) ? nullptr : h0.get_data_ptr(), // call cudnn with nullptr if no h0 passed in
 				cxDesc_,
 				nullptr, //cx
 				wDesc_,
@@ -1254,6 +1254,7 @@ namespace lten {
 				reserveSize_));
 
 
+			h0_ = &h0;
 			resultImpl->misc1_ = sequence_len;
 			resultImpl->misc_ptr1_ = this;
 			resultImpl->add_child(*(static_cast<TensorImpl<float>*>(input.get_smart_ptr().get_real_object())));
@@ -1268,7 +1269,7 @@ namespace lten {
 				xDesc_,
 				input.get_data_ptr(), // x
 				hxDesc_,
-				nullptr, // hx
+				(&h0 == lten::MISC_globals::singleton()->get_null_tensor()) ? nullptr : h0.get_data_ptr(), // call cudnn with nullptr if no h0 passed in
 				cxDesc_,
 				nullptr, // cx
 				wDesc_,

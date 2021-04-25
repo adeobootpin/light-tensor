@@ -946,6 +946,198 @@ void div_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 
 
 template<typename Dtype>
+void cat_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
+{
+	int dim;
+	lten::device device_type;
+	int ndims;
+	const uint64_t* dims_array;
+	const uint64_t* strides_array;
+	const uint64_t* top_strides_array;
+	uint64_t quotient;
+	uint64_t remainder;
+	uint64_t cat_index;
+	uint64_t axis_coord;
+	uint64_t numels;
+	uint64_t index;
+	Dtype* bottom_data_ptr;
+	Dtype* top_data_ptr;
+	uint64_t dim_offset;
+	uint64_t op1_numels;
+
+	device_type = parent_ptr->get_device();
+
+	ndims = parent_ptr->get_ndims();
+
+	dim = static_cast<int>(parent_ptr->misc1_);
+
+	assert(child_index == 0 || child_index == 1);
+
+	numels = bottom_gradient_ptr->GetNumels();
+	dims_array = bottom_gradient_ptr->GetSizes();
+	strides_array = bottom_gradient_ptr->GetStrides();
+	bottom_data_ptr = bottom_gradient_ptr->GetDataPtr();
+	top_data_ptr = top_gradient_ptr->GetDataPtr();
+	top_strides_array = top_gradient_ptr->GetStrides();
+
+
+	if (lten::CPU == device_type)
+	{
+		if (child_index == 0)
+		{
+			for (index = 0; index < numels; index++)
+			{
+				if (dim > 0)
+				{
+					quotient = index / strides_array[dim - 1];
+					remainder = index % strides_array[dim - 1];
+					cat_index = quotient * top_strides_array[dim - 1] + remainder;
+				}
+				else
+				{
+					cat_index = index;
+				}
+
+				bottom_data_ptr[index] = top_data_ptr[cat_index];
+			}
+		}
+		else
+		{
+			dim_offset = children_ptr_array[0]->get_sizes()[dim];
+			op1_numels = children_ptr_array[0]->get_numels();
+
+			for (index = 0; index < numels; index++)
+			{
+				if (dim > 0)
+				{
+					quotient = index / strides_array[dim - 1];
+					remainder = index % strides_array[dim - 1];
+					axis_coord = remainder / strides_array[dim]; // axis_dim is other's coordinate in dimension dim
+					remainder = remainder % strides_array[dim];
+					cat_index = quotient * top_strides_array[dim - 1] + (axis_coord + dim_offset) * top_strides_array[dim] + remainder;
+				}
+				else
+				{
+					cat_index = index + op1_numels;
+				}
+
+				bottom_data_ptr[index] = top_data_ptr[cat_index];
+			}
+		}
+	}
+	else
+	{
+		if (lten::GPU == device_type)
+		{
+#ifdef USE_CUDA
+			if (child_index == 0)
+			{
+				if (dim > 0)
+				{
+					gpu_cat_backward(bottom_data_ptr, top_data_ptr, strides_array[dim - 1], top_strides_array[dim - 1], numels);
+				}
+				else
+				{
+					gpu_cat_backward(bottom_data_ptr, top_data_ptr, 0, 0, numels);
+				}
+
+			}
+			else
+			{
+				dim_offset = children_ptr_array[0]->get_sizes()[dim];
+				op1_numels = children_ptr_array[0]->get_numels();
+
+				if (dim > 0)
+				{
+					gpu_cat_backward(bottom_data_ptr, top_data_ptr, strides_array[dim - 1], strides_array[dim], top_strides_array[dim - 1], top_strides_array[dim], dim_offset, op1_numels, numels);
+				}
+				else
+				{
+					gpu_cat_backward(bottom_data_ptr, top_data_ptr, 0, 0, 0, 0, dim_offset, op1_numels, numels);
+				}
+			}
+#else
+			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+		}
+		else
+		{
+			LTEN_ERR("Invalid tensor device type");
+		}
+	}
+
+}
+
+
+template<typename Dtype>
+void cat_backwardXX(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
+{
+	int dim;
+	lten::device device_type;
+	int ndims;
+	const uint64_t* dims_array;
+	const uint64_t* strides_array;
+
+	device_type = parent_ptr->get_device();
+
+	ndims = parent_ptr->get_ndims();
+
+	dim = static_cast<int>(parent_ptr->misc1_);
+
+	assert(child_index == 0 || child_index == 1);
+
+	if (lten::CPU == device_type)
+	{
+		uint64_t numels;
+		uint64_t index;
+		uint64_t coordinates[MAX_DIMS];
+		Dtype* bottom_data_ptr;
+		uint64_t dim_offset;
+
+		numels = bottom_gradient_ptr->GetNumels();
+		dims_array = bottom_gradient_ptr->GetSizes();
+		strides_array = bottom_gradient_ptr->GetStrides();
+		bottom_data_ptr = bottom_gradient_ptr->GetDataPtr();
+
+		if (child_index == 0)
+		{
+			for (index = 0; index < numels; index++)
+			{
+				CoordinatesFromIndex(index, dims_array, strides_array, coordinates, ndims);
+				bottom_data_ptr[index] = (*top_gradient_ptr)(coordinates, ndims);
+			}
+		}
+		else
+		{
+			dim_offset = children_ptr_array[0]->get_sizes()[dim];
+
+			for (index = 0; index < numels; index++)
+			{
+				CoordinatesFromIndex(index, dims_array, strides_array, coordinates, ndims);
+				coordinates[dim] += dim_offset;
+				bottom_data_ptr[index] = (*top_gradient_ptr)(coordinates, ndims);
+			}
+		}
+	}
+	else
+	{
+		if (lten::GPU == device_type)
+		{
+#ifdef USE_CUDA
+
+#else
+			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+		}
+		else
+		{
+			LTEN_ERR("Invalid tensor device type");
+		}
+	}
+
+}
+
+template<typename Dtype>
 void max_backward1(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
 	uint64_t dim;
@@ -3232,10 +3424,9 @@ void gru_cudnn_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray
 
 	cudnnHandle = lten::CUDA_globlas::singleton()->get_cudnn_handle(0);
 
-
 	sequence_len = static_cast<int>(parent_ptr->misc1_);
-	
 
+	
 	cudnnErrCheck(cudnnRNNBackwardData(cudnnHandle,
 		*(gru_cudnn->get_rnnDesc()),
 		sequence_len,
@@ -3250,7 +3441,7 @@ void gru_cudnn_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray
 		*(gru_cudnn->get_wDesc()),
 		gru_cudnn->get_w(),
 		*(gru_cudnn->get_hxDesc()),
-		nullptr,
+		(gru_cudnn->get_h0() == lten::MISC_globals::singleton()->get_null_tensor()) ? nullptr : gru_cudnn->get_h0()->get_data_ptr(), // call cudnn with nullptr if no h0 passed in
 		*(gru_cudnn->get_cxDesc()),
 		nullptr,
 		gru_cudnn->get_dxDesc(),
@@ -3265,14 +3456,13 @@ void gru_cudnn_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray
 		gru_cudnn->get_reserveSize()));
 
 
-
 	cudnnErrCheck(cudnnRNNBackwardWeights(cudnnHandle,
 		*(gru_cudnn->get_rnnDesc()),
 		sequence_len,
 		gru_cudnn->get_xDesc(), // xDesc,
 		children_ptr_array[0]->get_data_ptr(), //x
 		*(gru_cudnn->get_hxDesc()),
-		nullptr, //hx
+		(gru_cudnn->get_h0() == lten::MISC_globals::singleton()->get_null_tensor()) ? nullptr : gru_cudnn->get_h0()->get_data_ptr(), // call cudnn with nullptr if no h0 passed in
 		gru_cudnn->get_yDesc(),
 		parent_ptr->get_data_ptr(), //y
 		gru_cudnn->get_workspace(),
@@ -3281,7 +3471,7 @@ void gru_cudnn_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray
 		gru_cudnn->get_dw(),
 		gru_cudnn->get_reserveSpace(),
 		gru_cudnn->get_reserveSize()));
-	
+
 }
 #endif
 
@@ -3314,7 +3504,7 @@ void transpose_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray
 	{
 		if (lten::GPU == device_type)
 		{
-#ifdef USE_CUDA
+#ifdef USE_CUDA	
 			const uint64_t* strides;
 			const uint64_t* strides_transp;
 
@@ -3325,6 +3515,7 @@ void transpose_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray
 			gpu_transpose(static_cast<Dtype*>(top_gradient_ptr->GetDataPtr()), static_cast<Dtype*>(bottom_gradient_ptr->GetDataPtr()), dim1, dim2,
 				(int)strides[dim1], (int)strides[dim1 - 1], (int)strides[dim2], (int)strides[dim2 - 1],
 				(int)strides_transp[dim1], (int)strides_transp[dim1 - 1], (int)strides_transp[dim2], (int)strides_transp[dim2 - 1], top_gradient_ptr->GetNumels());
+				
 
 
 #else
@@ -3418,6 +3609,161 @@ void nll_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 
 }
 
+
+
+template<typename Dtype>
+void embedding_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
+{
+	lten::Tensor* input_indices;
+	lten::device device_type;
+	uint64_t indices_per_batch;
+	uint64_t i;
+	uint64_t j;
+	uint64_t k;
+	uint64_t index;
+	const uint64_t* dims;
+	unsigned int embedding_dim;
+
+	input_indices = static_cast<lten::Tensor*>(parent_ptr->misc_ptr1_);
+
+	device_type = parent_ptr->get_device();
+
+	dims = top_gradient_ptr->GetSizes();
+
+	embedding_dim = static_cast<unsigned int>(parent_ptr->misc1_);
+
+
+	Dtype* dst = bottom_gradient_ptr->GetDataPtr();
+	Dtype* src = top_gradient_ptr->GetDataPtr();
+	int* inp = (int*)input_indices->get_data_ptr();
+	uint64_t numels = top_gradient_ptr->GetNumels();
+	indices_per_batch = dims[1];
+
+
+	if (lten::CPU == device_type)
+	{
+		memset(dst, 0, sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
+		uint64_t rem;
+		uint64_t offs;
+		for (i = 0; i < numels; i++)
+		{
+			j = i / (indices_per_batch * embedding_dim);
+			rem = i % (indices_per_batch * embedding_dim);
+			k = rem / embedding_dim;
+			offs = rem % embedding_dim;
+
+			index = inp[j * indices_per_batch + k];
+
+			dst[index * embedding_dim + offs] += src[j * (indices_per_batch * embedding_dim) + k * embedding_dim + offs];
+		}
+		/*
+		for (i = 0; i < batches; i++)
+		{
+			coordinates[0] = i;
+			for (j = 0; j < num_indices; j++)
+			{
+				coordinates[1] = j;
+				index = (*inp)(coordinates, 2);
+				src = top_gradient_ptr->GetDataPtr(coordinates, 2);
+				dst = bottom_gradient_ptr->GetDataPtr(&index, 1);
+
+				for (k = 0; k < embedding_dim; k++)
+				{
+					dst[k] += src[k];
+				}
+			}
+		}
+		*/
+	}
+	else
+	{
+		if (lten::GPU == device_type)
+		{
+#ifdef USE_CUDA
+			ZeroMemoryOnGPU(dst, sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
+			gpu_embedding_backward(dst, src, inp, numels, indices_per_batch, embedding_dim);
+#else
+			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+		}
+		else
+		{
+			LTEN_ERR("Invalid tensor device type");
+		}
+	}
+
+}
+
+
+template<typename Dtype>
+void embedding_backwardxxx(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
+{
+	lten::Tensor* input_indices;
+	lten::device device_type;
+	MultiDimArray<int>* inp;
+	uint64_t batches;
+	uint64_t num_indices;
+	uint64_t i;
+	uint64_t j;
+	uint64_t k;
+	uint64_t coordinates[2];
+	uint64_t index;
+	Dtype* src;
+	Dtype* dst;
+	const uint64_t* dims;
+	uint64_t embedding_dim;
+
+	input_indices = static_cast<lten::Tensor*>(parent_ptr->misc_ptr1_);
+
+	inp = input_indices->get_mdarray<int>();
+
+	device_type = parent_ptr->get_device();
+
+	dims = top_gradient_ptr->GetSizes();
+	batches = dims[0];
+	num_indices = dims[1];
+	embedding_dim = parent_ptr->misc1_;
+
+
+	if (lten::CPU == device_type)
+	{
+		memset(bottom_gradient_ptr->GetDataPtr(), 0, sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
+
+		for (i = 0; i < batches; i++)
+		{
+			coordinates[0] = i;
+			for (j = 0; j < num_indices; j++)
+			{
+				coordinates[1] = j;
+				index = (*inp)(coordinates, 2);
+				src = top_gradient_ptr->GetDataPtr(coordinates, 2);
+				dst = bottom_gradient_ptr->GetDataPtr(&index, 1);
+
+				for (k = 0; k < embedding_dim; k++)
+				{
+					dst[k] += src[k];
+				}
+			}
+		}
+	}
+	else
+	{
+		if (lten::GPU == device_type)
+		{
+#ifdef USE_CUDA
+
+#else
+			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+		}
+		else
+		{
+			LTEN_ERR("Invalid tensor device type");
+		}
+	}
+
+}
+
 #ifdef USE_CUDA
 template<typename Dtype>
 void bn_cudnn_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
@@ -3497,6 +3843,7 @@ template void add_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimAr
 template void sub_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void mul_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void div_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
+template void cat_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void max_backward1(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void sum_backward1(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void max_backward2(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
@@ -3515,7 +3862,7 @@ template void dropout_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiD
 template void gru_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void transpose_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void nll_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
-
+template void embedding_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 
 template void matmul_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void sub_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
@@ -3524,6 +3871,7 @@ template void add_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArra
 template void sub_array_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void mul_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void div_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
+template void cat_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void max_backward1(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void sum_backward1(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void max_backward2(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
@@ -3542,7 +3890,7 @@ template void dropout_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDim
 template void gru_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void transpose_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void nll_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
-
+template void embedding_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 
 template void matmul_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void sub_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
@@ -3551,6 +3899,7 @@ template void add_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDim
 template void sub_array_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void mul_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void div_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
+template void cat_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void max_backward1(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void sum_backward1(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void max_backward2(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
@@ -3569,6 +3918,7 @@ template void dropout_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, Mult
 template void gru_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void transpose_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void nll_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
+template void embedding_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 
 #ifdef USE_CUDA
 template void conv2_cudnn_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);

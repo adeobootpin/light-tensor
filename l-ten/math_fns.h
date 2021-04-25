@@ -224,5 +224,20 @@ void gpu_transpose(Dtype* src, Dtype* dst, int dim_1, int dim_2,
 	int stride_src_dim_1, int stride_src_dim_1_minus_1, int stride_src_dim_2, int stride_src_dim_2_minus_1,
 	int stride_trn_dim_1, int stride_trn_dim_1_minus_1, int stride_trn_dim_2, int stride_trn_dim_2_minus_1, uint64_t numels);
 
+template<typename Dtype>
+void gpu_cat(Dtype* dest, Dtype* op1, Dtype* op2, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t op1_stride, uint64_t op2_stride_1, uint64_t op2_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t op2_numels);
+
+
+template<typename Dtype>
+void gpu_cat_backward(Dtype* dest, Dtype* src, uint64_t dest_stride, uint64_t src_stride, uint64_t dest_numels);
+
+template<typename Dtype>
+void gpu_cat_backward(Dtype* dest, Dtype* src, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t src_stride_1, uint64_t src_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t dest_numels);
+
+template<typename Dtype>
+void gpu_embedding(Dtype* dst, Dtype* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
+
+template<typename Dtype>
+void gpu_embedding_backward(Dtype* dst, Dtype* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
 
 #endif // MATH_FNS_H

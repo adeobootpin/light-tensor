@@ -240,7 +240,7 @@ namespace lten {
 		~GRU_CUDNN();
 
 		bool init();
-		Tensor forward(Tensor& input);
+		Tensor forward(Tensor& input, Tensor& h0 = *(lten::MISC_globals::singleton()->get_null_tensor()));
 		std::vector<Tensor*> get_all_weights();
 		void clear_gradients();
 		void to(device target_device, int target_device_index = 0) {}
@@ -261,7 +261,7 @@ namespace lten {
 		cudnnTensorDescriptor_t* get_dhxDesc() { return &dhxDesc_; }
 		cudnnTensorDescriptor_t* get_dcxDesc() { return &dcxDesc_; }
 
-
+		Tensor* get_h0() { return h0_; }
 
 		void* get_w() { return w_; }
 		void* get_dw() { return dw_; }
@@ -315,6 +315,8 @@ namespace lten {
 		cudnnDropoutDescriptor_t dropoutDesc_;
 		cudnnRNNDescriptor_t rnnDesc_;
 		enum { num_linear_layers_ = 6 };
+
+		Tensor* h0_;
 	};
 #endif
 
@@ -723,6 +725,32 @@ namespace lten {
 		int output_dims_[4]; //NCHW
 	};
 #endif
+
+
+	class Embedding : public Module
+	{
+	public:
+		Embedding(unsigned int num_embeddings, unsigned int embedding_dim) : num_embeddings_(num_embeddings), embedding_dim_(embedding_dim), weight_ptr_(nullptr) {}
+		~Embedding()
+		{
+			delete weight_ptr_;
+		}
+
+		bool init();
+		Tensor forward(Tensor& input);
+		Tensor* get_weights() { return weight_ptr_; }
+		void clear_gradients();
+		std::vector<Tensor*> get_all_weights();
+		void to(device target_device, int target_device_index = 0);
+
+	private:
+		unsigned int num_embeddings_;
+		unsigned int embedding_dim_;
+		Tensor* weight_ptr_;
+		Tensor input_indices_;
+	};
+
+
 
 	Tensor relu(Tensor& input);
 	Tensor softmax(Tensor& input, int dim = 1);
