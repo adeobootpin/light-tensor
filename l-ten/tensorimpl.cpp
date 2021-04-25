@@ -56,7 +56,6 @@ int TensorImpl<Dtype>::allocate_from_buffer(const std::initializer_list<uint64_t
 			if (options_ptr && options_ptr->alloc_gradient_buffer)
 			{
 				gradient_ptr_ = new CUDA_MultiDimArray<Dtype>;
-				ZeroMemoryOnGPU(gradient_ptr_->GetDataPtr(), sizeof(Dtype) * gradient_ptr_->GetNumels()); // zero gradients (backward logic expects gradients to be initialized to 0)
 			}
 #else
 			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
@@ -89,7 +88,7 @@ int TensorImpl<Dtype>::allocate_from_buffer(const std::initializer_list<uint64_t
 			if (GPU == get_device())
 			{
 #ifdef USE_CUDA
-				ZeroMemoryOnGPU(gradient_ptr_->GetDataPtr(), sizeof(Dtype) * gradient_ptr_->GetNumels());
+				ZeroMemoryOnGPU(gradient_ptr_->GetDataPtr(), sizeof(Dtype) * gradient_ptr_->GetNumels()); // zero gradients (backward logic expects gradients to be initialized to 0)
 #else
 				LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
 #endif
