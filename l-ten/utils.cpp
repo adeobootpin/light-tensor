@@ -94,7 +94,7 @@ Exit:
 
 }
 
-int WriteDataToFile(char* file_name, void* data, size_t data_size)
+int WriteDataToFile(const char* file_name, void* data, size_t data_size)
 {
 	int ret;
 	FILE* stream;
@@ -161,10 +161,16 @@ void GetMaxDims(uint64_t* dims_1, uint64_t* dims_2, uint64_t* dims_max, int ndim
 }
 
 
-void CoordinatesFromIndex(int index, const uint64_t* dims, const uint64_t* strides, uint64_t* coordinates, int ndims)
+void CoordinatesFromIndex(uint64_t index, const uint64_t* dims, const uint64_t* strides, uint64_t* coordinates, int ndims)
 {
 	int i;
-	int idx;
+	uint64_t idx;
+
+	if (ndims == 1)
+	{
+		coordinates[0] = index;
+		return;
+	}
 
 	idx = index;
 

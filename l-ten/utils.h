@@ -13,12 +13,12 @@ void ReshapeDims(const uint64_t* current_dims_ptr, int current_size, uint64_t* n
 
 
 void GetMaxDims(uint64_t* dims_1, uint64_t* dims_2, uint64_t* dims_max, int ndims);
-void CoordinatesFromIndex(int index, const uint64_t* dims, const uint64_t* strides, uint64_t* coordinates, int ndims);
+void CoordinatesFromIndex(uint64_t index, const uint64_t* dims, const uint64_t* strides, uint64_t* coordinates, int ndims);
 
 void* BlockRealloc(void* current_block_ptr, int current_size, int new_size);
 
 int ReadDataFromFile(const char* file_name, void** pp_data, size_t* data_size);
-int WriteDataToFile(char* file_name, void* data, size_t data_size);
+int WriteDataToFile(const char* file_name, void* data, size_t data_size);
 
 void GetMinMax(float* data, uint64_t len, float* min_val, float* max_val);
 void Quantize(float* data, int* q_data, uint64_t len, QuantizationParams* qp);
