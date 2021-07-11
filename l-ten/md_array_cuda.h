@@ -164,7 +164,6 @@ public:
 
 	virtual CUDA_MultiDimArray& operator=(const CUDA_MultiDimArray& other)
 	{
-		Reset();
 		Allocate(other.GetSizes(), other.GetNDims());
 		GPUToGPUCopy(data_ptr_, other.GetDataPtr(), sizeof(Dtype) * numels_);
 		return *this;

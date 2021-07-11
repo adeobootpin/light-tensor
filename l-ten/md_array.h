@@ -489,7 +489,6 @@ public:
 
 	virtual MultiDimArray& operator=(const MultiDimArray& other)
 	{
-		Reset();
 		Allocate(other.GetSizes(), other.GetNDims());
 		memcpy(data_ptr_, other.GetDataPtr(), sizeof(Dtype) * numels_);
 		return *this;
