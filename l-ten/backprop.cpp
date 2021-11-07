@@ -12,7 +12,7 @@
 // backpropagation handler (rather that ouside the handler as usual).  Another example is fc_backward which special cases the handling of bias
 // gradients.
 //-------------------------------------------------------------------------------------------------------------------------------------------------
-
+//#define OLD_BACPROP
 namespace lten {
 	template<typename Dtype>
 	void TensorImpl<Dtype>::backward(MultiDimArray<Dtype>* top_gradient_ptr)
@@ -27,10 +27,12 @@ namespace lten {
 			LTEN_ERR("autograd is off for this tensor");
 		}
 
+		set_graph_ref_count();
+
 		do_backward(top_gradient_ptr);
 	}
 
-
+#ifdef OLD_BACPROP
 	template<typename Dtype>
 	void TensorImpl<Dtype>::do_backward(MultiDimArray<Dtype>* top_gradient_ptr)
 	{
@@ -176,6 +178,210 @@ namespace lten {
 				LTEN_ERR("No backpropagation function defined");
 			}
 			children_[i]->do_backward(bottom_gradient);
+		}
+	}
+#else
+	template<typename Dtype>
+	void TensorImpl<Dtype>::do_backward(MultiDimArray<Dtype>* top_gradient_ptr)
+	{
+		int ret;
+		int i;
+		MultiDimArray<Dtype> bottom_gradient_cpu;
+#ifdef USE_CUDA
+		CUDA_MultiDimArray<Dtype> bottom_gradient_gpu;
+#endif
+		MultiDimArray<Dtype>* bottom_gradient = nullptr;
+		TensorImpl* child_ptr;
+
+
+		// store gradients only for leaf nodes and only those that want it
+		// or tensors appearing multiple times on the computational graph
+		// (such tensors need to accumulate gradients and then backprop only once, preventing exponential growth of backward call tree)
+		//if ((!num_children_ && autograd_on_) || accumulate_gradients_)
+		if ((!num_children_) || accumulate_gradients_)
+		{
+			if (!gradient_ptr_)
+			{
+				if (CPU == get_device())
+				{
+					gradient_ptr_ = new MultiDimArray<Dtype>;
+					if (!gradient_ptr_)
+					{
+						std::terminate(); // no hope, bail
+					}
+					ret = gradient_ptr_->Allocate(get_sizes(), get_ndims());
+					if (ret)
+					{
+						std::terminate(); // no hope, bail
+					}
+					::FillBuffer<Dtype>(gradient_ptr_->GetDataPtr(), gradient_ptr_->GetNumels(), 0);
+				}
+				else
+				{
+					if (GPU == get_device())
+					{
+#ifdef USE_CUDA
+						gradient_ptr_ = new CUDA_MultiDimArray<Dtype>;
+						if (!gradient_ptr_)
+						{
+							std::terminate();
+						}
+						ret = gradient_ptr_->Allocate(get_sizes(), get_ndims());
+						if (ret)
+						{
+							std::terminate();
+						}
+						ZeroMemoryOnGPU(gradient_ptr_->GetDataPtr(), sizeof(Dtype) * gradient_ptr_->GetNumels());
+#else
+						LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+					}
+					else
+					{
+						LTEN_ERR("Invalid tensor device type");
+					}
+				}
+			}
+
+			if (top_gradient_ptr)
+			{
+				assert(gradient_ptr_->GetNumels() == top_gradient_ptr->GetNumels());
+				if (CPU == get_device())
+				{
+					cpu_axpy(gradient_ptr_->GetNumels(), static_cast<Dtype>(1), top_gradient_ptr->GetDataPtr(), gradient_ptr_->GetDataPtr(), gradient_ptr_->GetDataPtr());
+				}
+				else
+				{
+					if (GPU == get_device())
+					{
+#ifdef USE_CUDA
+						float alpha;
+						cublasHandle_t hCuBlas;
+						alpha = 1;
+
+						hCuBlas = CUDA_globlas::singleton()->get_cublas_handle(get_device_index());
+
+						cublasSaxpy(hCuBlas, static_cast<int>(gradient_ptr_->GetNumels()), &alpha, (float*)top_gradient_ptr->GetDataPtr(), 1, (float*)gradient_ptr_->GetDataPtr(), 1);
+#else
+						LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+					}
+					else
+					{
+						LTEN_ERR("Invalid tensor device type");
+					}
+				}
+			}
+			else
+			{
+				assert(0);
+				if (CPU == get_device())
+				{
+					::FillBuffer<Dtype>(gradient_ptr_->GetDataPtr(), gradient_ptr_->GetNumels(), 1);
+				}
+				else
+				{
+					if (GPU == get_device())
+					{
+#ifdef USE_CUDA
+						ZeroMemoryOnGPU(gradient_ptr_->GetDataPtr(), sizeof(Dtype) * gradient_ptr_->GetNumels());
+#else
+						LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+					}
+					else
+					{
+						LTEN_ERR("Invalid tensor device type");
+					}
+				}
+			}
+		}
+
+		// do normal back prop for graph_ref_count_ = 1 (default) and 
+		// graph_ref_count_ = 0  (final tensor e.g. loss) 
+		// which does not get added to the computational graph
+		// and hence never gets a ref count increment
+		//
+		// do gradient accumulation otherwise (graph_ref_count_ > 1)
+		if (graph_ref_count_ > 1)
+		{
+			graph_ref_count_--;
+		}
+		else
+		{
+			for (i = 0; i < num_children_; i++)
+			{
+				child_ptr = children_[i];
+
+				if (CPU == get_device())
+				{
+					bottom_gradient = &bottom_gradient_cpu;
+					bottom_gradient->Allocate(child_ptr->get_sizes(), child_ptr->get_ndims());
+				}
+				else
+				{
+					if (GPU == get_device())
+					{
+#ifdef USE_CUDA
+						bottom_gradient = &bottom_gradient_gpu;
+						bottom_gradient->Allocate(child_ptr->get_sizes(), child_ptr->get_ndims());
+#else
+						LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+					}
+					else
+					{
+						LTEN_ERR("Invalid tensor device type");
+					}
+				}
+
+				if (grad_fn_)
+				{
+					if (gradient_ptr_)
+					{
+						(this->grad_fn_)(bottom_gradient, gradient_ptr_, children_, i, this);
+					}
+					else
+					{
+						(this->grad_fn_)(bottom_gradient, top_gradient_ptr, children_, i, this);
+					}
+				}
+				else
+				{
+					LTEN_ERR("No backpropagation function defined");
+				}
+				children_[i]->do_backward(bottom_gradient);
+			}
+
+			if (accumulate_gradients_)
+			{
+				//::FillBuffer<Dtype>(gradient_ptr_->GetDataPtr(), gradient_ptr_->GetNumels(), 0);
+				accumulate_gradients_ = false;
+			}
+		}
+	}
+#endif
+	template<typename Dtype>
+	void TensorImpl<Dtype>::set_graph_ref_count()
+	{
+		//return;
+		int i;
+		if (!num_children_)
+		{
+			return;
+		}
+		graph_ref_count_++;
+		if (graph_ref_count_ == 2)
+		{
+			accumulate_gradients_ = true;
+		}
+
+		if (graph_ref_count_ == 1)
+		{
+			for (i = 0; i < num_children_; i++)
+			{
+				children_[i]->set_graph_ref_count();
+			}
 		}
 	}
 

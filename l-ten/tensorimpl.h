@@ -135,7 +135,7 @@ namespace lten {
 		virtual void backward(MultiDimArray<Dtype>* top_gradient_ptr = nullptr);
 		void do_backward(MultiDimArray<Dtype>* top_gradient_ptr);
 		virtual void clear_gradients();
-
+		void set_graph_ref_count();
 
 		void matmul(TensorImpl& operand1, TensorImpl& operand2);
 		void add(TensorImpl& operand1, TensorImpl& operand2);
@@ -176,6 +176,7 @@ namespace lten {
 		bool own_misc_ptr1_; // pointer onwnership 
 		bool own_misc_ptr2_;
 		TensorImpl* view_src_;
+		int graph_ref_count_;
 
 	private:
 		MultiDimArray<Dtype>* md_array_base_ = nullptr;
@@ -188,6 +189,7 @@ namespace lten {
 
 		enum { MAX_CHILDREN = 2 };
 		int num_children_;
+		bool accumulate_gradients_;
 		TensorImpl* children_[MAX_CHILDREN];
 		intrusive_ptr<TensorImpl>* children_lock_[MAX_CHILDREN];
 
@@ -200,6 +202,8 @@ namespace lten {
 			device_ = CPU;
 			device_index_ = 0;
 			num_children_ = 0;
+			graph_ref_count_ = 0;
+			accumulate_gradients_ = false;
 			gradient_ptr_ = nullptr;
 			grad_fn_ = nullptr;
 			//name_[0] = '\0';
