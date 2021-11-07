@@ -87,7 +87,7 @@ endif
 ifeq ($(USE_AVX_256),1)
 CXXFLAGS+=-D"USE_AVX_256" -mavx
 NVCC_FLAGS+=-D"USE_AVX_256"
-BENCHMARK_FLAGS+=-D"USE_AVX_256 -mavx"
+BENCHMARK_FLAGS+=-D"USE_AVX_256" -mavx
 endif
 
 
@@ -149,7 +149,7 @@ l-ten/math_fns.cu.o:
 	nvcc l-ten/math_fns.cu $(NVCC_FLAGS) -I$(CUDA_INCLUDE_DIR) -o l-ten/math_fns.cu.o
 
 clean:
-	rm -f test benchmark $(TEST_OBJ_FILES) $(LIB_OBJ_FILES) libtensor.a $(DEPENDS)
+	rm -f test benchmark-mnist benchmark-speech-cmds $(TEST_OBJ_FILES) $(LIB_OBJ_FILES) libtensor.a $(DEPENDS)
 
 
 
