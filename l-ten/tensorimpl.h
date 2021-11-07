@@ -147,16 +147,21 @@ namespace lten {
 		void log(TensorImpl& operand1);
 		void sig(TensorImpl& operand1);
 		void tanh(TensorImpl& operand1);
+		void sqrt(TensorImpl& operand1);
 		void scalar_mul(TensorImpl& operand1, double scalar);
 		void max(TensorImpl& operand1);
 		void max(TensorImpl& operand1, int dim);
 		void sum(TensorImpl& operand1);
 		void sum(TensorImpl& operand1, int dim);
+		void mean(TensorImpl& operand1, int dim);
+		void var(TensorImpl& operand1, int dim);
+		void std(TensorImpl& operand1, int dim);
 		void sub_array(TensorImpl& operand1, int index); // initialize TensorImpl as a sub array of another (for [][][]... array indexing)
 		void reshape(TensorImpl& operand1, const std::initializer_list<uint64_t>& dims);
 		void squeeze(TensorImpl& operand1, int dim);
 		void unsqueeze(TensorImpl& operand1, int dim);
 		void transpose(TensorImpl& operand1, int dim1, int dim2);
+		void masked_fill(TensorImpl& operand1, TensorImpl& mask, double value);
 
 
 		void(*grad_fn_)(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, TensorImpl** children_ptr_array, int child_index, TensorImpl* parent_ptr);
@@ -248,6 +253,8 @@ void sig_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 template<typename Dtype>
 void tanh_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
 template<typename Dtype>
+void sqrt_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
+template<typename Dtype>
 void scalar_mul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
 template<typename Dtype>
 void conv2_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
@@ -275,7 +282,16 @@ template<typename Dtype>
 void pooling_cudnn_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
 template<typename Dtype>
 void embedding_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
-
+template<typename Dtype>
+void mean_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
+template<typename Dtype>
+void var_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
+template<typename Dtype>
+void std_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
+template<typename Dtype>
+void layernorm_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
+template<typename Dtype>
+void masked_fill_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
 
 
 #endif // TENSORIMPL_H

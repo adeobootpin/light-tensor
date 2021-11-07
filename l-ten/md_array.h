@@ -161,14 +161,14 @@ public:
 		Allocate(dims_ptr, ndims, buffer_to_use_ptr, own_memory);
 	}
 
-	
+
 	MultiDimArray(const MultiDimArray& other)
 	{
 		Reset();
 		Allocate(other.GetSizes(), other.GetNDims());
 		memcpy(data_ptr_, other.GetDataPtr(), sizeof(Dtype) * numels_);
 	}
-	
+
 
 	virtual ~MultiDimArray()
 	{
@@ -177,7 +177,7 @@ public:
 			delete data_ptr_;
 		}
 	}
-	
+
 #ifdef USE_MEMORYPOOL
 	void* operator new(size_t size)
 	{
@@ -192,7 +192,7 @@ public:
 #endif
 
 	const uint64_t GetNumels() const { return numels_; }
-	const uint64_t* GetSizes() const { return dims_array_;}
+	const uint64_t* GetSizes() const { return dims_array_; }
 	const uint64_t* GetStrides() const { return strides_array_; }
 	int GetNDims() const { return ndims_; }
 	void SetMemoryOwnership(bool own_memory) { own_memory_ = own_memory; }
@@ -216,7 +216,7 @@ public:
 		ndims_ = ndims;
 
 		numels = 1;
-		for (i = ndims-1; i >= 0; i--)
+		for (i = ndims - 1; i >= 0; i--)
 		{
 			strides_array_[i] = numels;
 			dims_array_[i] = dims_ptr[i];
@@ -233,7 +233,7 @@ public:
 		}
 		else
 		{
-			if(!own_memory_ || (numels_ != numels)) // (conservatively) avoid a memory allocation where possible
+			if (!own_memory_ || (numels_ != numels)) // (conservatively) avoid a memory allocation where possible
 			{
 				if (data_ptr_ && own_memory_)
 				{
@@ -354,7 +354,7 @@ public:
 
 			assert(numels == numels_); // sanity check
 			memcpy(dims_array_, dims_array, sizeof(uint64_t) * ndims);
-		
+
 		}
 
 		ndims_ = ndims;
@@ -370,12 +370,12 @@ public:
 		}
 		data_ptr_ = nullptr;
 	}
-	
-	Dtype& operator()(const uint64_t* dims, int ndims,  bool broadcast = false) const 
+
+	Dtype& operator()(const uint64_t* dims, int ndims, bool broadcast = false) const
 	{
 		return data_ptr_[GetOffset(dims, ndims, broadcast)];
 	}
-	
+
 	Dtype* GetDataPtr() const
 	{
 		return data_ptr_;
@@ -424,7 +424,7 @@ public:
 
 		return data_ptr_[dim_1 * (dims_array_[1] * dims_array_[2] * dims_array_[3]) + dim_2 * (dims_array_[2] * dims_array_[3]) + dim_3 * dims_array_[3] + dim_4];
 	}
-	
+
 	Dtype& operator()(uint64_t dim_1, uint64_t dim_2, uint64_t dim_3, uint64_t dim_4, uint64_t dim_5, bool broadcast = false)
 	{
 		if (ndims_ != 5)
@@ -441,7 +441,7 @@ public:
 		}
 
 		return data_ptr_[
-			    dim_1 * (dims_array_[1] * dims_array_[2] * dims_array_[3] * dims_array_[4]) +
+			dim_1 * (dims_array_[1] * dims_array_[2] * dims_array_[3] * dims_array_[4]) +
 				dim_2 * (dims_array_[2] * dims_array_[3] * dims_array_[4]) +
 				dim_3 * (dims_array_[3] * dims_array_[4]) +
 				dim_4 * (dims_array_[4]) +
@@ -455,7 +455,7 @@ public:
 		int i;
 		uint64_t dim;
 
-		if(index >= dims_array_[0]);
+		if (index >= dims_array_[0]);
 		{
 			LTEN_ERR("Index out of range");
 		}
@@ -476,7 +476,7 @@ public:
 			return MultiDimArray(&dims_array_[1], ndims_ - 1, &data_ptr_[stride * index], false);
 		}
 	}
-	
+
 	MultiDimArray& operator=(Dtype scalar)
 	{
 		if ((ndims_ != 1) || (dims_array_[0] != 1))
@@ -519,9 +519,9 @@ public:
 		}
 
 		other_dims_array = other.GetSizes();
-		
+
 		broadcast_required = check_broadcast_required(other_dims_array, dims_result);
-		
+
 		result.Allocate(dims_result, ndims_, nullptr, false);
 
 
@@ -576,7 +576,7 @@ public:
 		return MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
 	}
 
-	MultiDimArray operator-(const MultiDimArray& other) 
+	MultiDimArray operator-(const MultiDimArray& other)
 	{
 		const uint64_t* other_dims_array;
 		uint64_t dims_result[MAX_DIMS];
@@ -599,7 +599,7 @@ public:
 			Reshape(3);
 			other.Reshape(3);
 		}
-	
+
 		other_dims_array = other.GetSizes();
 
 		broadcast_required = check_broadcast_required(other_dims_array, dims_result);
@@ -847,6 +847,103 @@ public:
 		return MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
 	}
 
+	MultiDimArray masked_fill(const MultiDimArray& mask, Dtype value = 0)
+	{
+		const uint64_t* mask_dims_array;
+		uint64_t dims_result[MAX_DIMS];
+		uint64_t dims[MAX_DIMS];
+		uint64_t i;
+		MultiDimArray result;
+		uint64_t h, w;
+		uint64_t H, W;
+		int original_ndims = 0;
+		bool broadcast_required;
+
+		if (ndims_ != mask.GetNDims())
+		{
+			LTEN_ERR("MultiDimArrays must have the same number of dimensions");
+		}
+
+		if (ndims_ < 3)
+		{
+			original_ndims = ndims_;
+			Reshape(3);
+			mask.Reshape(3);
+		}
+
+		mask_dims_array = mask.GetSizes();
+
+		broadcast_required = check_broadcast_required(mask_dims_array, dims_result);
+
+		result.Allocate(dims_result, ndims_, nullptr, false);
+
+
+		if (ndims_ > 2)
+		{
+			md_array_dim_iterator it(dims_result, ndims_ - 2);
+
+			H = dims_result[ndims_ - 2];
+			W = dims_result[ndims_ - 1];
+
+			for (auto higher_indices : it)
+			{
+				if (broadcast_required)
+				{
+					memcpy(dims, higher_indices, sizeof(uint64_t) * (ndims_ - 2));
+					for (h = 0; h < H; h++)
+					{
+						for (w = 0; w < W; w++)
+						{
+							dims[ndims_ - 2] = h; // tack on the lower dims to get the full dimensions
+							dims[ndims_ - 1] = w;
+							if (mask(dims, ndims_, broadcast_required) == 0)
+							{
+								result(dims, ndims_) = value;
+							}
+							else
+							{
+								result(dims, ndims_) = (*this)(dims, ndims_, broadcast_required);
+							}
+
+						}
+					}
+				}
+				else
+				{
+					Dtype* result_data = result.GetDataPtr(higher_indices, ndims_ - 2);
+					Dtype* lhs_data = GetDataPtr(higher_indices, ndims_ - 2);
+					Dtype* rhs_data = mask.GetDataPtr(higher_indices, ndims_ - 2);
+					uint64_t len = H * W;
+
+					for (i = 0; i < len; i++)
+					{
+						if (rhs_data[i] == 0)
+						{
+							result_data[i] = value;
+						}
+						else
+						{
+							result_data[i] = lhs_data[i];
+						}
+					}
+				}
+			}
+		}
+		else
+		{
+			assert(0);
+		}
+
+		if (original_ndims)
+		{
+			Reshape(original_ndims);
+			mask.Reshape(original_ndims);
+			result.Reshape(original_ndims);
+		}
+
+		return MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
+	}
+
 	MultiDimArray matmul(const MultiDimArray& other)
 	{
 		const uint64_t* other_dims_array;
@@ -881,7 +978,7 @@ public:
 
 		result.Allocate(dims_result, ndims_, nullptr, false);
 
-	
+
 		md_array_dim_iterator it(dims_result, ndims_ - 2);
 
 		M = dims_result[ndims_ - 2];
@@ -896,7 +993,7 @@ public:
 
 			cpu_gemm(false, false, M, N, K, static_cast<Dtype>(1), lhs_data, rhs_data, static_cast<Dtype>(0), result_data);
 		}
-		
+
 		if (original_ndims)
 		{
 			Reshape(original_ndims);
@@ -921,7 +1018,7 @@ public:
 		uint64_t cat_index;
 		uint64_t dim_offset;
 		Dtype* data;
-		
+
 
 		if (ndims_ != other.GetNDims())
 		{
@@ -1036,7 +1133,7 @@ public:
 		{
 			LTEN_ERR("Invalid args");
 		}
-		
+
 
 		memcpy(dims_result, dims_array_, sizeof(uint64_t) * ndims_);
 		temp = dims_result[dim_1];
@@ -1241,7 +1338,7 @@ std::ostream& operator<<(std::ostream& out, const MultiDimArray<Dtype>& md_array
 		}
 		else
 		{
-			ndims-=2;
+			ndims -= 2;
 			md_array_dim_iterator it(md_array.GetSizes(), ndims);
 
 			for (auto indices : it)
@@ -1264,7 +1361,7 @@ std::ostream& operator<<(std::ostream& out, const MultiDimArray<Dtype>& md_array
 			}
 		}
 	}
-	
+
 
 	return out;
 }

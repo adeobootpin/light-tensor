@@ -791,9 +791,12 @@ void gpu_scalar_mul(float alpha, float* A, float* C, uint64_t height_A, uint64_t
 	dimGrid.y = (int)ceil((float)max_height / (float)dimBlock.y);
 
 	len = height_A * width_A;
-	gpu_scalar_mul<float>(A, A, alpha, len);
+	gpu_scalar_mul<float>(A, A, alpha, len); // need to fix this!!! cannot modify inputs!!!
 
 	gpu_axpy_kernel << <dimGrid, dimBlock >> > (A, C, (int)height_A, (int)width_A, (int)height_C, (int)width_C, max_height, max_width);
+
+
+	gpu_scalar_mul<float>(A, A, 1.0/alpha, len); // need to fix this!!!
 }
 
 
@@ -1641,6 +1644,368 @@ void gpu_embedding_backward(Dtype* dst, Dtype* grad, int* indices, uint64_t nume
 
 
 
+template<typename Dtype>
+__global__ void gpu_sqrt_kernel(Dtype* dst, const Dtype* src, const uint64_t numels)
+{
+	uint64_t i;
+
+	i = blockIdx.x * blockDim.x + threadIdx.x;
+	if (i < numels)
+	{
+		dst[i] = sqrtf(src[i]);
+	}
+}
+
+template<typename Dtype>
+void gpu_sqrt(Dtype* dst, const Dtype* src, const uint64_t numels)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+
+	gpu_sqrt_kernel << <num_blocks, DEFA_THREADS >> > (dst, src, numels);
+
+}
+
+template<typename Dtype>
+__global__ void gpu_sqrt_backward_kernel(Dtype* bottom, const Dtype* top, const Dtype* middle, const uint64_t numels)
+{
+	uint64_t i;
+
+	i = blockIdx.x * blockDim.x + threadIdx.x;
+	if (i < numels)
+	{
+		bottom[i] = top[i] * static_cast<Dtype>(0.5f * powf(static_cast<float>(middle[i]), -0.5f));
+	}
+}
+
+
+template<typename Dtype>
+void gpu_sqrt_backward(Dtype* bottom, const Dtype* top, const Dtype* middle, const uint64_t numels)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+
+	gpu_sqrt_backward_kernel << <num_blocks, DEFA_THREADS >> > (bottom, top, middle, numels);
+}
+
+
+
+template<typename Dtype>
+__global__ void gpu_mean_kernel(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride)
+{
+	uint64_t i;
+	uint64_t offset_src;
+	uint64_t offset_dst;
+	Dtype sum;
+	uint64_t rem;
+
+	offset_dst = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (offset_dst >= numels)
+	{
+		return;
+	}
+
+	rem = offset_dst % stride;
+	offset_src = (offset_dst - rem) * ratio + rem; // calculate corresponding offset in src buffer given an offset in the destination buffer
+
+	sum = static_cast<Dtype>(0);
+	for (i = 0; i < dim_size; i++)  // iterate through required dimension
+	{
+		sum += src[offset_src];
+		offset_src += stride;
+	}
+	dst[offset_dst] = sum / static_cast<Dtype>(dim_size);
+}
+
+template<typename Dtype>
+void gpu_mean(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+
+	gpu_mean_kernel << <num_blocks, DEFA_THREADS >> > (src, dst, numels, ratio, dim_size, stride);
+
+}
+
+
+template<typename Dtype>
+__global__ void gpu_mean_backward_kernel(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride)
+{
+	uint64_t offset_src;
+	uint64_t offset_dst;
+	uint64_t rem;
+	Dtype val;
+	uint64_t i;
+
+	offset_src = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (offset_src >= numels)
+	{
+		return;
+	}
+
+	rem = offset_src % stride;
+	offset_dst = (offset_src - rem) * ratio + rem; // calculate corresponding offset in dst buffer given an offset in the source buffer
+
+	val = src[offset_src];
+	for (i = 0; i < dim_size; i++)  // iterate through required dimension
+	{
+		dst[offset_dst] += val / static_cast<Dtype>(dim_size);
+		offset_dst += stride;
+	}
+}
+
+template<typename Dtype>
+void gpu_mean_backward(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+
+	gpu_mean_backward_kernel << <num_blocks, DEFA_THREADS >> > (dst, src, numels, ratio, dim_size, stride);
+
+}
+
+
+
+template<typename Dtype>
+__global__ void gpu_var_kernel(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride)
+{
+	uint64_t i;
+	uint64_t offset_src;
+	uint64_t offset_dst;
+	Dtype temp;
+	Dtype var;
+	Dtype mean;
+	uint64_t rem;
+
+	offset_dst = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (offset_dst >= numels)
+	{
+		return;
+	}
+
+	rem = offset_dst % stride;
+	offset_src = (offset_dst - rem) * ratio + rem; // calculate corresponding offset in src buffer given an offset in the destination buffer
+
+	mean = static_cast<Dtype>(0);
+	for (i = 0; i < dim_size; i++)  // iterate through required dimension
+	{
+		mean += src[offset_src];
+		offset_src += stride;
+	}
+	mean = mean / static_cast<Dtype>(dim_size);
+
+	offset_src = (offset_dst - rem) * ratio + rem; // calculate corresponding offset in src buffer given an offset in the destination buffer
+	var = static_cast<Dtype>(0);
+	for (i = 0; i < dim_size; i++)  // iterate through required dimension again
+	{
+		temp = src[offset_src] - mean;
+		var += (temp * temp);
+		offset_src += stride;
+	}
+
+	if (dim_size > 1)
+	{
+		var /= static_cast<Dtype>(dim_size - 1);
+	}
+	dst[offset_dst] = var;
+
+}
+
+template<typename Dtype>
+void gpu_var(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+
+	gpu_var_kernel << <num_blocks, DEFA_THREADS >> > (src, dst, numels, ratio, dim_size, stride);
+
+}
+
+
+template<typename Dtype>
+__global__ void gpu_var_backward_kernel(Dtype* dst, const Dtype* src, const Dtype* op1, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride)
+{
+	uint64_t offset_src;
+	uint64_t offset_dst;
+	uint64_t rem;
+	Dtype val;
+	Dtype mean;
+	uint64_t i;
+
+	offset_src = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (offset_src >= numels)
+	{
+		return;
+	}
+
+	rem = offset_src % stride;
+	offset_dst = (offset_src - rem) * ratio + rem; // calculate corresponding offset in dst buffer given an offset in the source buffer
+
+	mean = static_cast<Dtype>(0);
+	for (i = 0; i < dim_size; i++)  // iterate through required dimension
+	{
+		mean += op1[offset_dst];
+		offset_dst += stride;
+	}
+	mean = mean / static_cast<Dtype>(dim_size);
+
+
+
+	offset_dst = (offset_src - rem) * ratio + rem; // calculate corresponding offset in dst buffer given an offset in the source buffer
+	for (i = 0; i < dim_size; i++)  // iterate through required dimension
+	{
+		val = (static_cast<Dtype>(2) * (op1[offset_dst] - mean)) / static_cast<Dtype>(dim_size - 1);
+		dst[offset_dst] += val * src[offset_src];
+		offset_dst += stride;
+	}
+}
+
+template<typename Dtype>
+void gpu_var_backward(Dtype* dst, const Dtype* src, const Dtype* op1, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+
+	gpu_var_backward_kernel << <num_blocks, DEFA_THREADS >> > (dst, src, op1, numels, ratio, dim_size, stride);
+
+}
+
+template<typename Dtype>
+__global__ void gpu_std_kernel(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode)
+{
+	uint64_t i;
+	uint64_t offset_src;
+	uint64_t offset_dst;
+	Dtype temp;
+	Dtype var;
+	Dtype mean;
+	uint64_t rem;
+
+	offset_dst = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (offset_dst >= numels)
+	{
+		return;
+	}
+
+	rem = offset_dst % stride;
+	offset_src = (offset_dst - rem) * ratio + rem; // calculate corresponding offset in src buffer given an offset in the destination buffer
+
+	mean = static_cast<Dtype>(0);
+	for (i = 0; i < dim_size; i++)  // iterate through required dimension
+	{
+		mean += src[offset_src];
+		offset_src += stride;
+	}
+	mean = mean / static_cast<Dtype>(dim_size);
+
+	offset_src = (offset_dst - rem) * ratio + rem; // calculate corresponding offset in src buffer given an offset in the destination buffer
+	var = static_cast<Dtype>(0);
+	for (i = 0; i < dim_size; i++)  // iterate through required dimension again
+	{
+		temp = src[offset_src] - mean;
+		var += (temp * temp);
+		offset_src += stride;
+	}
+
+	if (dim_size > 1)
+	{
+		if (sample_mode)
+		{
+			var /= static_cast<Dtype>(dim_size - 1);
+		}
+		else
+		{
+			var /= static_cast<Dtype>(dim_size);
+		}
+	}
+	//dst[offset_dst] = static_cast<Dtype>(powf(static_cast<float>(var + 1e-5), 0.5));
+	dst[offset_dst] = static_cast<Dtype>(powf(static_cast<float>(var), 0.5));
+
+}
+
+template<typename Dtype>
+void gpu_std(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+
+	gpu_std_kernel << <num_blocks, DEFA_THREADS >> > (src, dst, numels, ratio, dim_size, stride, sample_mode);
+
+}
+
+
+template<typename Dtype>
+__global__ void gpu_std_backward_kernel(Dtype* dst, const Dtype* src, const Dtype* op1, const Dtype* std, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode)
+{
+	uint64_t offset_src;
+	uint64_t offset_dst;
+	uint64_t rem;
+	Dtype val;
+	Dtype mean;
+	uint64_t i;
+
+	offset_src = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (offset_src >= numels)
+	{
+		return;
+	}
+
+
+	rem = offset_src % stride;
+	offset_dst = (offset_src - rem) * ratio + rem; // calculate corresponding offset in dst buffer given an offset in the source buffer
+
+	mean = static_cast<Dtype>(0);
+	for (i = 0; i < dim_size; i++)  // iterate through required dimension
+	{
+		mean += op1[offset_dst];
+		offset_dst += stride;
+	}
+	mean = mean / static_cast<Dtype>(dim_size);
+
+
+
+	offset_dst = (offset_src - rem) * ratio + rem; // calculate corresponding offset in dst buffer given an offset in the source buffer
+	for (i = 0; i < dim_size; i++)  // iterate through required dimension
+	{
+		if (sample_mode)
+		{
+			val = (static_cast<Dtype>(2) * (op1[offset_dst] - mean)) / static_cast<Dtype>(dim_size - 1); // d_var/dxi
+		}
+		else
+		{
+			val = (static_cast<Dtype>(2) * (op1[offset_dst] - mean)) / static_cast<Dtype>(dim_size); // d_var/dxi
+		}
+		val = (val * 0.5) / std[offset_src];
+		dst[offset_dst] += val * src[offset_src];
+		offset_dst += stride;
+	}
+
+}
+
+template<typename Dtype>
+void gpu_std_backward(Dtype* dst, const Dtype* src, const Dtype* op1, const Dtype* std, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(numels) + DEFA_THREADS - 1) / DEFA_THREADS;
+
+	gpu_std_backward_kernel << <num_blocks, DEFA_THREADS >> > (dst, src, op1, std, numels, ratio, dim_size, stride, sample_mode);
+
+}
+
 template void gpu_sum<float>(float* A, float* B, float* C, uint64_t height_A, uint64_t width_A, uint64_t height_B, uint64_t width_B);
 template void gpu_sub<float>(float* A, float* B, float* C, uint64_t height_A, uint64_t width_A, uint64_t height_B, uint64_t width_B);
 template void gpu_mul<float>(float* A, float* B, float* C, uint64_t height_A, uint64_t width_A, uint64_t height_B, uint64_t width_B, float beta);
@@ -1677,7 +2042,14 @@ template void gpu_cat_backward<float>(float* dest, float* src, uint64_t dest_str
 template void gpu_cat_backward<float>(float* dest, float* src, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t src_stride_1, uint64_t src_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t dest_numels);
 template void gpu_embedding<float>(float* dst, float* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
 template void gpu_embedding_backward<float>(float* dst, float* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
-
+template void gpu_sqrt<float>(float* dst, const float* src, const uint64_t numels);
+template void gpu_sqrt_backward(float* bottom, const float* top, const float* middle, const uint64_t numels);
+template void gpu_mean(const float* src, float* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void gpu_mean_backward(float* dst, const float* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void gpu_var(const float* src, float* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void gpu_var_backward(float* dst, const float* src, const float* op1, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void gpu_std(const float* src, float* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
+template void gpu_std_backward(float* dst, const float* src, const float* op1, const float* std, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
 
 template void gpu_sum<int>(int* A, int* B, int* C, uint64_t height_A, uint64_t width_A, uint64_t height_B, uint64_t width_B);
 template void gpu_sub<int>(int* A, int* B, int* C, uint64_t height_A, uint64_t width_A, uint64_t height_B, uint64_t width_B);
@@ -1715,6 +2087,14 @@ template void gpu_cat_backward<int>(int* dest, int* src, uint64_t dest_stride, u
 template void gpu_cat_backward<int>(int* dest, int* src, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t src_stride_1, uint64_t src_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t dest_numels);
 template void gpu_embedding<int>(int* dst, int* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
 template void gpu_embedding_backward<int>(int* dst, int* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
+template void gpu_sqrt<int>(int* dst, const int* src, const uint64_t numels);
+template void gpu_sqrt_backward(int* bottom, const int* top, const int* middle, const uint64_t numels);
+template void gpu_mean(const int* src, int* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void gpu_mean_backward(int* dst, const int* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void gpu_var(const int* src, int* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void gpu_var_backward(int* dst, const int* src, const int* op1, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void gpu_std(const int* src, int* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
+template void gpu_std_backward(int* dst, const int* src, const int* op1, const int* std, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
 
 template void gpu_sum<uint8_t>(uint8_t* A, uint8_t* B, uint8_t* C, uint64_t height_A, uint64_t width_A, uint64_t height_B, uint64_t width_B);
 template void gpu_sub<uint8_t>(uint8_t* A, uint8_t* B, uint8_t* C, uint64_t height_A, uint64_t width_A, uint64_t height_B, uint64_t width_B);
@@ -1752,3 +2132,12 @@ template void gpu_cat_backward<uint8_t>(uint8_t* dest, uint8_t* src, uint64_t de
 template void gpu_cat_backward<uint8_t>(uint8_t* dest, uint8_t* src, uint64_t dest_stride_1, uint64_t dest_stride_2, uint64_t src_stride_1, uint64_t src_stride_2, uint64_t dim_offset, uint64_t op1_numels, uint64_t dest_numels);
 template void gpu_embedding<uint8_t>(uint8_t* dst, uint8_t* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
 template void gpu_embedding_backward<uint8_t>(uint8_t* dst, uint8_t* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
+template void gpu_sqrt<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels);
+template void gpu_sqrt_backward(uint8_t* bottom, const uint8_t* top, const uint8_t* middle, const uint64_t numels);
+template void gpu_mean(const uint8_t* src, uint8_t* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void gpu_mean_backward(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void gpu_var(const uint8_t* src, uint8_t* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void gpu_var_backward(uint8_t* dst, const uint8_t* src, const uint8_t* op1, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void gpu_std(const uint8_t* src, uint8_t* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
+template void gpu_std_backward(uint8_t* dst, const uint8_t* src, const uint8_t* op1, const uint8_t* std, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
+

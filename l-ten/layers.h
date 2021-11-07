@@ -637,6 +637,41 @@ namespace lten {
 		uint64_t max_ones_vector_size_ = 0;
 	};
 
+	class LayerNorm : public Module
+	{
+	public:
+		LayerNorm(uint64_t num_features, bool affine = true) : num_features_(num_features), affine_(affine) {}
+		~LayerNorm() {}
+
+		bool init();
+		Tensor forward(Tensor& input);
+		Tensor* get_weights() { return weight_ptr_; }
+		Tensor* get_bias() { return bias_ptr_; }
+		Tensor* get_ln() { return &ln_; }
+		Tensor* get_mu() { return &mu_; }
+		Tensor* get_sd() { return &sd_; }
+		Tensor* get_temp1() { return &temp1_; }
+		void clear_gradients();
+		std::vector<Tensor*> get_all_weights();
+		void to(device target_device, int target_device_index = 0);
+		bool is_affine() { return affine_; }
+
+	private:
+		uint64_t num_features_;
+		Tensor* weight_ptr_; // gamma
+		Tensor* bias_ptr_; // beta
+		Tensor eps_;
+		Tensor ln_;
+		Tensor sd_;
+		Tensor mu_;
+		Tensor temp1_;
+		Tensor temp2_;
+		Tensor temp3_;
+		float epsilon_ = 1e-5f;
+		uint64_t max_ones_vector_size_ = 0;
+		bool affine_;
+	};
+
 #ifdef USE_CUDA
 	class BatchNorm_CUDNN : public Module
 	{

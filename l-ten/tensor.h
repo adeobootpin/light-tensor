@@ -41,14 +41,14 @@ namespace lten {
 		{
 		}
 
-		
+
 		Tensor(intrusive_ptr<TensorImplBase> smart_ptr)
 		{
 			smart_ptr_ = smart_ptr;
 			assert(smart_ptr_.get_real_object() != nullptr);
 		}
-		
-	
+
+
 		void* get_data_ptr() { return smart_ptr_->get_data_ptr(); }
 		void* get_grad_ptr() { return smart_ptr_->get_grad_ptr(); }
 		const uint64_t get_numels() { return smart_ptr_->get_numels(); }
@@ -61,7 +61,7 @@ namespace lten {
 		dtype get_data_type() const { return smart_ptr_->get_data_type(); }
 		device get_device() const { return smart_ptr_->get_device(); }
 		int get_device_index() const { return smart_ptr_->get_device_index(); }
-		
+
 
 		Tensor& operator=(const Tensor& x) &
 		{
@@ -90,7 +90,7 @@ namespace lten {
 
 				return Tensor(result);
 			}
-			
+
 			else
 			{
 				if (data_type == INT32)
@@ -121,7 +121,7 @@ namespace lten {
 					}
 				}
 			}
-			
+
 			LTEN_ERR("Invalid tesor data type");
 			return Tensor();
 		}
@@ -768,6 +768,211 @@ namespace lten {
 			return Tensor();
 		}
 
+		Tensor sqrt()
+		{
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				resultImpl->sqrt(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()));
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					resultImpl->sqrt(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()));
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						resultImpl->sqrt(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()));
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
+
+		Tensor mean(int dim)
+		{
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				resultImpl->mean(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), dim);
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					resultImpl->mean(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), dim);
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						resultImpl->mean(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), dim);
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
+
+		Tensor var(int dim)
+		{
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				resultImpl->var(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), dim);
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					resultImpl->var(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), dim);
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						resultImpl->var(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), dim);
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
+
+		Tensor std(int dim)
+		{
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				resultImpl->std(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), dim);
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					resultImpl->std(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), dim);
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						resultImpl->std(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), dim);
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
+
+
 		Tensor operator*(float scalar)
 		{
 			dtype data_type = smart_ptr_->get_data_type();
@@ -1187,6 +1392,58 @@ namespace lten {
 
 		}
 
+		Tensor masked_fill(const Tensor& mask, double value)
+		{
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				resultImpl->masked_fill(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<float>*>(mask.smart_ptr_.get_real_object()), value);
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					resultImpl->masked_fill(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<int>*>(mask.smart_ptr_.get_real_object()), value);
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						resultImpl->masked_fill(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<uint8_t>*>(mask.smart_ptr_.get_real_object()), value);
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
+
+
 		template<typename Dtype>
 		MultiDimArray<Dtype>* get_mdarray() const
 		{
@@ -1212,7 +1469,7 @@ namespace lten {
 	Tensor TensorFromBuffer(const uint64_t* dims_ptr, int ndims, void* data_ptr, bool own_memory = false, TensorOps* options_ptr = nullptr);
 	Tensor AllocateTensor(const std::initializer_list<uint64_t>& dims, TensorOps* options_ptr = nullptr);
 	Tensor AllocateTensor(const uint64_t* dims_ptr, int ndims, TensorOps* options_ptr = nullptr);
-	
+
 }
 
 void PrintBuildInfo();

@@ -70,6 +70,24 @@ template<typename Dtype>
 void cpu_sum_backward(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 
 template<typename Dtype>
+void cpu_mean(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+
+template<typename Dtype>
+void cpu_mean_backward(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+
+template<typename Dtype>
+void cpu_var(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+
+template<typename Dtype>
+void cpu_var_backward(Dtype* dst, const Dtype* src, const Dtype* op1, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+
+template<typename Dtype>
+void cpu_std(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode = true);
+
+template<typename Dtype>
+void cpu_std_backward(Dtype* dst, const Dtype* src, const Dtype* op1, const Dtype* std, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode = true);
+
+template<typename Dtype>
 void cpu_dropout(Dtype* dst, Dtype* src, unsigned int* mask, unsigned int threshold, Dtype scale, uint64_t len);
 
 template<typename Dtype>
@@ -154,7 +172,7 @@ void gpu_nll(Dtype* input, Dtype* target, Dtype* loss, uint64_t len, uint64_t ba
 template<typename Dtype>
 void gpu_scalar_mul(Dtype* A, Dtype* B, Dtype scalar, uint64_t len); // B = scaler * A
 
-// C += alpha * X
+// C += alpha * A
 // supports broadcast semantics
 // use this when C dims < A dims (uses atomics, but no support for uint8_t)
 void gpu_scalar_mul(float alpha, float* A, float* C, uint64_t height_A, uint64_t width_A, uint64_t height_C, uint64_t width_C);
@@ -239,5 +257,29 @@ void gpu_embedding(Dtype* dst, Dtype* wts, int* indices, uint64_t numels, uint64
 
 template<typename Dtype>
 void gpu_embedding_backward(Dtype* dst, Dtype* wts, int* indices, uint64_t numels, uint64_t indices_per_batch, unsigned int embedding_dim);
+
+template<typename Dtype>
+void gpu_sqrt(Dtype* dst, const Dtype* src, const uint64_t numels);
+
+template<typename Dtype>
+void gpu_sqrt_backward(Dtype* bottom, const Dtype* top, const Dtype* middle, const uint64_t numels);
+
+template<typename Dtype>
+void gpu_mean(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+
+template<typename Dtype>
+void gpu_mean_backward(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+
+template<typename Dtype>
+void gpu_var(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+
+template<typename Dtype>
+void gpu_var_backward(Dtype* dst, const Dtype* src, const Dtype* op1, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+
+template<typename Dtype>
+void gpu_std(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode = true);
+
+template<typename Dtype>
+void gpu_std_backward(Dtype* dst, const Dtype* src, const Dtype* op1, const Dtype* std, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode = true);
 
 #endif // MATH_FNS_H
