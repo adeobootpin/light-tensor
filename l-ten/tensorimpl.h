@@ -62,10 +62,9 @@ namespace lten {
 		bool alloc_gradient_buffer;
 	};
 
-
-
-	struct TensorImplBase : public intrusive_ptr_type
+	struct TensorImplBase
 	{
+	public:
 		/*these should never get called but can't make them pure virtual*/
 		virtual dtype get_data_type() { assert(0);  return FLOAT32; }
 		virtual void set_data_type(dtype data_type) { assert(0); }
@@ -80,8 +79,32 @@ namespace lten {
 		virtual int get_device_index() { assert(0);  return 0; }
 		virtual void backward(MultiDimArray<float>* top_gradient_ptr = nullptr) { assert(0); }
 		virtual void clear_gradients() { assert(0); }
-	};
 
+	public:
+		TensorImplBase() : ref_count_(0) {}
+
+		virtual ~TensorImplBase()
+		{
+			assert(ref_count_.load() == 0);
+		}
+
+		int add_ref()
+		{
+			ref_count_++;
+			return ref_count_;
+		}
+
+		int release()
+		{
+			ref_count_--;
+			return ref_count_;
+		}
+
+		virtual void release_resources() {}
+
+	private:
+		mutable std::atomic<int> ref_count_;
+	};
 
 	template<typename Dtype>
 	struct TensorImpl : public TensorImplBase
@@ -96,6 +119,18 @@ namespace lten {
 		{
 		}
 
+#ifdef USE_MEMORYPOOL
+		void* operator new(size_t size)
+		{
+			return lten::MISC_globals::singleton()->get_cpu_memorypool()->AllocateMemory(size);
+		}
+
+
+		void operator delete(void* memory)
+		{
+			return lten::MISC_globals::singleton()->get_cpu_memorypool()->FreeMemory(memory);
+		}
+#endif
 		virtual int get_ndims() const { return md_array_base_->GetNDims(); }
 		virtual const uint64_t* get_sizes() { return md_array_base_->GetSizes(); }
 		virtual const uint64_t* get_strides() { return md_array_base_->GetStrides(); }
