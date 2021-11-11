@@ -494,6 +494,18 @@ public:
 		return *this;
 	}
 
+	virtual MultiDimArray& operator=(MultiDimArray&& other)
+	{
+		if (own_memory_)
+		{
+			delete data_ptr_;
+		}
+		Allocate(other.GetSizes(), other.GetNDims(), other.data_ptr_, other.own_memory_);
+		other.own_memory_ = false;
+		other.data_ptr_ = nullptr;
+		return *this;
+	}
+
 	MultiDimArray operator+(const MultiDimArray& other)
 	{
 		const uint64_t* other_dims_array;

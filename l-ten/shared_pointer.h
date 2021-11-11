@@ -80,36 +80,6 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <atomic>
 
 
-class intrusive_ptr_type
-{
-public:
-	intrusive_ptr_type() : ref_count_(0) {}
-
-	virtual ~intrusive_ptr_type()
-	{
-		assert(ref_count_.load() == 0);
-	}
-	
-	int add_ref() 
-	{
-		ref_count_++;
-		return ref_count_;
-	}
-
-	int release()
-	{
-		ref_count_--;
-		return ref_count_;
-	}
-
-	virtual void release_resources() {}
-
-private:
-	mutable std::atomic<int> ref_count_;
-
-};
-
-
 template <class RealObject>
 class intrusive_ptr
 {
@@ -163,14 +133,14 @@ public:
 		return *this;
 	}
 
-	
+
 	RealObject* operator->() const
 	{
 		return real_object_;
 	}
-	
+
 	RealObject* get_real_object() const
-	{	
+	{
 		return real_object_;
 	}
 

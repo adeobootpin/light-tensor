@@ -48,7 +48,18 @@ namespace lten {
 			assert(smart_ptr_.get_real_object() != nullptr);
 		}
 
+#ifdef USE_MEMORYPOOL
+		void* operator new(size_t size)
+		{
+			return lten::MISC_globals::singleton()->get_cpu_memorypool()->AllocateMemory(size);
+		}
 
+
+		void operator delete(void* memory)
+		{
+			return lten::MISC_globals::singleton()->get_cpu_memorypool()->FreeMemory(memory);
+		}
+#endif	
 		void* get_data_ptr() { return smart_ptr_->get_data_ptr(); }
 		void* get_grad_ptr() { return smart_ptr_->get_grad_ptr(); }
 		const uint64_t get_numels() { return smart_ptr_->get_numels(); }

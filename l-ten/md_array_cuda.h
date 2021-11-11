@@ -27,7 +27,7 @@ SOFTWARE.
 
 
 template<typename Dtype>
-class CUDA_MultiDimArray :  public MultiDimArray<Dtype>
+class CUDA_MultiDimArray : public MultiDimArray<Dtype>
 {
 public:
 	CUDA_MultiDimArray() {}
@@ -58,8 +58,8 @@ public:
 			data_ptr_ = nullptr;
 		}
 	}
-	
-	
+
+
 #ifdef USE_MEMORYPOOL
 	void* operator new(size_t size)
 	{
@@ -152,7 +152,7 @@ public:
 
 		return ret;
 	}
-	
+
 	void ReleaseResources()
 	{
 		if (own_memory_)
@@ -166,6 +166,18 @@ public:
 	{
 		Allocate(other.GetSizes(), other.GetNDims());
 		GPUToGPUCopy(data_ptr_, other.GetDataPtr(), sizeof(Dtype) * numels_);
+		return *this;
+	}
+
+	virtual CUDA_MultiDimArray& operator=(CUDA_MultiDimArray&& other)
+	{
+		if (own_memory_)
+		{
+			FreeMemoryOnGPU(data_ptr_);
+		}
+		Allocate(other.GetSizes(), other.GetNDims(), other.data_ptr_, other.own_memory_);
+		other.own_memory_ = false;
+		other.data_ptr_ = nullptr;
 		return *this;
 	}
 
@@ -590,8 +602,8 @@ public:
 	using MultiDimArray<Dtype>::Reset;
 	using MultiDimArray<Dtype>::Reshape;
 
-	private:
-		int device_index_;
+private:
+	int device_index_;
 
 };
 
