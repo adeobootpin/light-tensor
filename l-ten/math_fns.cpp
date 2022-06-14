@@ -534,7 +534,7 @@ void cpu_std_backward(Dtype* dst, const Dtype* src, const Dtype* op1, const Dtyp
 			{
 				val = (static_cast<Dtype>(2) * (op1[offset_dst] - mean)) / static_cast<Dtype>(dim_size); // d_var/dxi
 			}
-			val = (val * 0.5) / std[offset_src];
+			val = (val * static_cast<Dtype>(0.5)) / std[offset_src];
 			dst[offset_dst] += val * src[offset_src];
 			offset_dst += stride;
 		}

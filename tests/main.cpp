@@ -3,6 +3,8 @@
 
 int main(int argc, char* argv[])
 {
+	conv3d_perf_test();
+
 	int ret;
 	int total_tests;
 	int total_tests_passed;

@@ -30,4 +30,8 @@ int MNIST_test(const char* MNIST_training_images, const char* MNIST_training_lab
 int MNIST_test_gpu(const char* MNIST_training_images, const char* MNIST_training_labels, const char* MNIST_test_images, const char* MNIST_test_labels);
 int quantized_MNIST_test(const char* MNIST_training_images, const char* MNIST_training_labels, const char* MNIST_test_images, const char* MNIST_test_labels);
 
+
+// performance tests
+int conv3d_perf_test();
+
 #endif // TESTS_H

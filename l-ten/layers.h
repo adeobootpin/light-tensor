@@ -607,6 +607,101 @@ namespace lten {
 		void* bwd_workspace_;
 		size_t bwd_workspace_size_;
 	};
+
+
+
+	class conv3d_CUDNN : public Module
+	{
+		enum { conv_dims = 3};
+	public:
+		conv3d_CUDNN(const int expected_batch_size, const int channels_in, const int depth_in, const int height_in, const int width_in, const int channels_out, bool use_bias, const int kernel_h, const int kernel_w, const int kernel_c, const int pad_h = 0, const int pad_w = 0, const int pad_c = 0, const int stride_h = 1, const int stride_w = 1, const int stride_c = 1)
+		{
+			channels_in_ = channels_in;
+			channels_out_ = channels_out;
+			kernel_h_ = kernel_h;
+			kernel_w_ = kernel_w;
+			kernel_c_ = kernel_c;
+			pad_h_ = pad_h;
+			pad_w_ = pad_w;
+			pad_c_ = pad_c;
+			stride_h_ = stride_h;
+			stride_w_ = stride_w;
+			stride_c_ = stride_c;
+
+			use_bias_ = use_bias;
+			batch_size_ = expected_batch_size;
+			depth_in_ = depth_in;
+			height_in_ = height_in;
+			width_in_ = width_in;
+		}
+
+		~conv3d_CUDNN() {}
+		bool init();
+		Tensor forward(Tensor& input);
+		void clear_gradients();
+		Tensor* get_weights() { return weight_ptr_; }
+		Tensor* get_bias() { return bias_ptr_; }
+		std::vector<Tensor*> get_all_weights();
+		void to(device target_device, int target_device_index) {}
+		bool is_using_bias() { return use_bias_; }
+
+		cudnnTensorDescriptor_t get_inputDesc() { return inputDesc_; }
+		cudnnTensorDescriptor_t get_outputDesc() { return outputDesc_; }
+		cudnnConvolutionDescriptor_t get_convDesc() { return convDesc_; }
+		cudnnFilterDescriptor_t get_wtDesc() { return wtDesc_; }
+		cudnnTensorDescriptor_t get_biasDesc() { return biasDesc_; }
+		cudnnConvolutionBwdFilterAlgo_t get_bwf_algo() { return bwf_algo_; }
+		cudnnConvolutionBwdDataAlgo_t get_bwd_algo() { return bwd_algo_; }
+		void* get_workspace() { return workspace_; }
+		size_t get_workspace_size() { return workspace_size_; }
+
+		void* get_bwf_workspace() { return bwf_workspace_; }
+		size_t get_bwf_workspace_size() { return bwf_workspace_size_; }
+
+		void* get_bwd_workspace() { return bwd_workspace_; }
+		size_t get_bwd_workspace_size() { return bwd_workspace_size_; }
+
+
+
+	private:
+		uint32_t batch_size_;
+		uint32_t height_in_;
+		uint32_t width_in_;
+		uint32_t channels_in_;
+		uint32_t channels_out_;
+		uint32_t kernel_h_;
+		uint32_t kernel_w_;
+		uint32_t kernel_c_;
+		uint32_t pad_h_;
+		uint32_t pad_w_;
+		uint32_t pad_c_;
+		uint32_t depth_in_;
+		uint32_t stride_h_;
+		uint32_t stride_w_;
+		uint32_t stride_c_;
+		Tensor* weight_ptr_;
+		Tensor* bias_ptr_;
+		bool use_bias_;
+		uint64_t output_dims_[conv_dims + 2]; //NCDHW
+
+		cudnnTensorDescriptor_t inputDesc_;
+		cudnnTensorDescriptor_t outputDesc_;
+		cudnnConvolutionDescriptor_t convDesc_;
+		cudnnFilterDescriptor_t wtDesc_;
+		cudnnTensorDescriptor_t biasDesc_;
+		cudnnConvolutionFwdAlgo_t algo_;
+		cudnnConvolutionBwdFilterAlgo_t bwf_algo_ = CUDNN_CONVOLUTION_BWD_FILTER_ALGO_0;
+		cudnnConvolutionBwdDataAlgo_t bwd_algo_ = CUDNN_CONVOLUTION_BWD_DATA_ALGO_0;
+
+		void* workspace_;
+		size_t workspace_size_;
+
+		void* bwf_workspace_;
+		size_t bwf_workspace_size_;
+
+		void* bwd_workspace_;
+		size_t bwd_workspace_size_;
+	};
 #endif
 
 
@@ -758,6 +853,58 @@ namespace lten {
 		int stride_h_;
 		int stride_w_;
 		int output_dims_[4]; //NCHW
+	};
+
+	class pooling3d_CUDNN : public Module
+	{
+	public:
+		pooling3d_CUDNN(int mode, const int kernel_h, const int kernel_w, const int kernel_c, const int pad_h = 0, const int pad_w = 0, const int pad_c = 0, const int stride_h = 1, const int stride_w = 1, const int stride_c = 1)
+		{
+			mode_ = mode;
+			kernel_h_ = kernel_h;
+			kernel_w_ = kernel_w;
+			kernel_c_ = kernel_c;
+			pad_h_ = pad_h;
+			pad_w_ = pad_w;
+			pad_c_ = pad_c;
+			stride_h_ = stride_h;
+			stride_w_ = stride_w;
+			stride_c_ = stride_c;
+		}
+
+		~pooling3d_CUDNN()
+		{
+			cudnnErrCheck(cudnnDestroyPoolingDescriptor(poolingDesc_));
+			cudnnErrCheck(cudnnDestroyTensorDescriptor(inputDesc_));
+			cudnnErrCheck(cudnnDestroyTensorDescriptor(outputDesc_));
+		}
+
+		bool init();
+		Tensor forward(Tensor& input);
+		void clear_gradients() {}
+		std::vector<Tensor*> get_all_weights() { std::vector<Tensor*> dud; return dud; }
+		void to(device target_device, int target_device_index) {}
+
+
+		cudnnPoolingDescriptor_t get_poolingDesc() { return poolingDesc_; }
+		cudnnTensorDescriptor_t get_inputDesc() { return inputDesc_; }
+		cudnnTensorDescriptor_t get_outputDesc() { return outputDesc_; }
+
+	private:
+		cudnnPoolingDescriptor_t poolingDesc_;
+		cudnnTensorDescriptor_t inputDesc_;
+		cudnnTensorDescriptor_t outputDesc_;
+		int mode_;
+		int kernel_h_;
+		int kernel_w_;
+		int kernel_c_;
+		int pad_h_;
+		int pad_w_;
+		int pad_c_;
+		int stride_h_;
+		int stride_w_;
+		int stride_c_;
+		int output_dims_[5]; //NCDHW
 	};
 #endif
 

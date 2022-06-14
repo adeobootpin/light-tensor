@@ -298,7 +298,18 @@ void FillBuffer(Dtype* data_ptr, uint64_t len, Dtype value)
 	}
 }
 
+void GetStrides(int* dims, int* strides, int ndims)
+{
+	int i;
+	uint32_t numels;
 
+	numels = 1;
+	for (i = ndims - 1; i >= 0; i--)
+	{
+		strides[i] = numels;
+		numels *= dims[i];
+	}
+}
 
 void ltenFail(const char* msg, const char* file, const char* line, const char* func)
 {
