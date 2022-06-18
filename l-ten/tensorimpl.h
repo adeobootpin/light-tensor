@@ -188,6 +188,7 @@ namespace lten {
 		void max(TensorImpl& operand1, int dim);
 		void sum(TensorImpl& operand1);
 		void sum(TensorImpl& operand1, int dim);
+		void mean(TensorImpl& operand1);
 		void mean(TensorImpl& operand1, int dim);
 		void var(TensorImpl& operand1, int dim);
 		void std(TensorImpl& operand1, int dim);

@@ -3,7 +3,7 @@
 
 int main(int argc, char* argv[])
 {
-	conv3d_perf_test();
+	mean_test();
 
 	int ret;
 	int total_tests;

@@ -209,7 +209,7 @@ namespace lten {
 	}
 
 
-	// like libtorch, assumes input is result of log_loftmax
+	// like libtorch, assumes input is result of log_softmax
 	Tensor nll_loss(Tensor& input, Tensor& target)
 	{
 		uint64_t dims[1];

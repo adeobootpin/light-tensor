@@ -1502,6 +1502,51 @@ namespace lten {
 
 
 	template<typename Dtype>
+	void TensorImpl<Dtype>::mean(TensorImpl<Dtype>& operand1)
+	{
+		uint64_t dims[MAX_DIMS];
+		TensorOps options;
+
+
+		options.data_type = operand1.get_data_type();
+		options.device_type = operand1.get_device();
+		options.device_index = operand1.get_device_index();
+
+		dims[0] = 1;
+		LTEN_ERR_CHECK(allocate(dims, 1, &options));
+
+		if (CPU == options.device_type)
+		{
+			assert(0); // TODO implement cpu version
+		}
+		else
+		{
+			if (GPU == options.device_type)
+			{
+#ifdef USE_CUDA			
+				gpu_mean(static_cast<Dtype*>(get_data_ptr()), static_cast<Dtype*>(operand1.get_data_ptr()), operand1.get_numels());
+#else
+				LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+			}
+			else
+			{
+				LTEN_ERR("Invalid tensor device type");
+			}
+		}
+
+
+		if (operand1.autograd_on())
+		{
+			misc1_ = -1; // let back prop know this is the version without axes
+
+			add_child(operand1);
+			grad_fn_ = ::mean_backward;
+			set_autograd(true);
+		}
+	}
+
+	template<typename Dtype>
 	void TensorImpl<Dtype>::mean(TensorImpl<Dtype>& operand1, int dim)
 	{
 		uint64_t len;
@@ -2234,6 +2279,7 @@ namespace lten {
 	template void TensorImpl<float>::max(TensorImpl<float>& operand1, int dim);
 	template void TensorImpl<float>::sum(TensorImpl<float>& operand1);
 	template void TensorImpl<float>::sum(TensorImpl<float>& operand1, int dim);
+	template void TensorImpl<float>::mean(TensorImpl<float>& operand1);
 	template void TensorImpl<float>::mean(TensorImpl<float>& operand1, int dim);
 	template void TensorImpl<float>::var(TensorImpl<float>& operand1, int dim);
 	template void TensorImpl<float>::std(TensorImpl<float>& operand1, int dim);
@@ -2268,6 +2314,7 @@ namespace lten {
 	template void TensorImpl<int>::max(TensorImpl<int>& operand1, int dim);
 	template void TensorImpl<int>::sum(TensorImpl<int>& operand1);
 	template void TensorImpl<int>::sum(TensorImpl<int>& operand1, int dim);
+	template void TensorImpl<int>::mean(TensorImpl<int>& operand1);
 	template void TensorImpl<int>::mean(TensorImpl<int>& operand1, int dim);
 	template void TensorImpl<int>::var(TensorImpl<int>& operand1, int dim);
 	template void TensorImpl<int>::std(TensorImpl<int>& operand1, int dim);
@@ -2302,6 +2349,7 @@ namespace lten {
 	template void TensorImpl<uint8_t>::max(TensorImpl<uint8_t>& operand1, int dim);
 	template void TensorImpl<uint8_t>::sum(TensorImpl<uint8_t>& operand1);
 	template void TensorImpl<uint8_t>::sum(TensorImpl<uint8_t>& operand1, int dim);
+	template void TensorImpl<uint8_t>::mean(TensorImpl<uint8_t>& operand1);
 	template void TensorImpl<uint8_t>::mean(TensorImpl<uint8_t>& operand1, int dim);
 	template void TensorImpl<uint8_t>::var(TensorImpl<uint8_t>& operand1, int dim);
 	template void TensorImpl<uint8_t>::std(TensorImpl<uint8_t>& operand1, int dim);

@@ -1330,36 +1330,3 @@ int fc_test(bool run_on_gpu)
 	return 0;
 }
 
-
-int main_cudnn(int argc, char** argv);
-int ReadDataFromFile(const char* file_name, void** pp_data, size_t* data_size);
-int conv3d_perf_test()
-{
-	//main_cudnn(1, nullptr);
-
-	lten::conv3d_CUDNN* conv3d;
-
-	conv3d = new lten::conv3d_CUDNN(2, 3, 16, 224, 224, 96, true, 7, 7, 3, 3, 3, 1, 4, 4, 2);
-
-	conv3d->init();
-
-	size_t cbBytes;
-	void* input_scratch;
-
-	ReadDataFromFile("e:/xfer/input.bin", &input_scratch, &cbBytes);
-
-	lten::Tensor x;
-	lten::Tensor y;
-	x = lten::TensorFromBuffer({ 2, 3, 16, 224, 224 }, input_scratch, false);
-
-	x = x.to(lten::GPU);
-
-	y = conv3d->forward(x);
-
-	//bool lten::conv3d_CUDNN c3d;
-	//conv1 = register_module("conv1", lten::Conv2d(channels_in, channels_out, false, kernel_h, kernel_w, pad_h, pad_w, stride_h, stride_w));
-
-	return 0;
-}
-
-

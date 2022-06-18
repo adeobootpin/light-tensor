@@ -32,6 +32,6 @@ int quantized_MNIST_test(const char* MNIST_training_images, const char* MNIST_tr
 
 
 // performance tests
-int conv3d_perf_test();
+void mean_test();
 
 #endif // TESTS_H

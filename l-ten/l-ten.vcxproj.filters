@@ -63,6 +63,9 @@
     <ClInclude Include="utils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="tensor_fns.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="backprop.cpp">
@@ -119,6 +122,9 @@
       <Filter>Source Files</Filter>
     </CudaCompile>
     <CudaCompile Include="utils.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="tensor_fns.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
   </ItemGroup>

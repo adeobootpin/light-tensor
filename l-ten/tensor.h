@@ -830,6 +830,57 @@ namespace lten {
 			return Tensor();
 		}
 
+		Tensor mean()
+		{
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				resultImpl->mean(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()));
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					resultImpl->mean(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()));
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						resultImpl->mean(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()));
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
+
 		Tensor mean(int dim)
 		{
 			dtype data_type = smart_ptr_->get_data_type();
@@ -1480,6 +1531,10 @@ namespace lten {
 	Tensor TensorFromBuffer(const uint64_t* dims_ptr, int ndims, void* data_ptr, bool own_memory = false, TensorOps* options_ptr = nullptr);
 	Tensor AllocateTensor(const std::initializer_list<uint64_t>& dims, TensorOps* options_ptr = nullptr);
 	Tensor AllocateTensor(const uint64_t* dims_ptr, int ndims, TensorOps* options_ptr = nullptr);
+
+	Tensor RandomTensor(const std::initializer_list<uint64_t>& dims, TensorOps* options = nullptr);
+	Tensor RandomTensor(const uint64_t* dims_ptr, int ndims, TensorOps* options = nullptr);
+
 
 }
 

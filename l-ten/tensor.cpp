@@ -205,6 +205,126 @@ namespace lten {
 	{
 		return TensorFromBuffer(dims_ptr, ndims, nullptr, true, options);
 	}
+
+
+	Tensor RandomTensor(const std::initializer_list<uint64_t>& dims, TensorOps* options)
+	{
+		uint64_t numels;
+		uint64_t i;
+		dtype data_type;
+		void* data_ptr = nullptr;
+
+		numels = 1;
+		for (uint64_t dim : dims)
+		{
+			numels *= dim;
+		}
+
+		if (options)
+		{
+			data_type = options->data_type;
+		}
+		else
+		{
+			data_type = FLOAT32;
+		}
+
+		if (data_type == FLOAT32)
+		{
+			data_ptr = new float[numels];
+			for (i = 0; i < numels; i++)
+			{
+				static_cast<float*>(data_ptr)[i] = rand() % 1000 * 0.001f;
+				if (!(rand() % 2))
+				{
+					static_cast<float*>(data_ptr)[i] *= -1.0f;
+				}
+			}
+		}
+		else
+		{
+			if (data_type == INT32)
+			{
+				LTEN_ERR("Not yet implemented");
+				data_ptr = new int[numels];
+			}
+			else
+			{
+				if (data_type == UINT8)
+				{
+					LTEN_ERR("Not yet implemented");
+					data_ptr = new uint8_t[numels];
+				}
+				else
+				{
+					LTEN_ERR("Invalid tensor data type");
+					//return Tensor(); // keep compiler quiet
+				}
+			}
+		}
+
+		return TensorFromBuffer(dims, data_ptr, true, options);
+	}
+
+	Tensor RandomTensor(const uint64_t* dims_ptr, int ndims, TensorOps* options)
+	{
+		uint64_t numels;
+		uint64_t i;
+		dtype data_type;
+		void* data_ptr = nullptr;
+
+		numels = 1;
+		for (i = 0; i < ndims; i++)
+		{
+			numels *= dims_ptr[i];
+		}
+
+		if (options)
+		{
+			data_type = options->data_type;
+		}
+		else
+		{
+			data_type = FLOAT32;
+		}
+
+		if (data_type == FLOAT32)
+		{
+			data_ptr = new float[numels];
+			for (i = 0; i < numels; i++)
+			{
+				static_cast<float*>(data_ptr)[i] = rand() % 1000 * 0.001f;
+				if (!(rand() % 2))
+				{
+					static_cast<float*>(data_ptr)[i] *= -1.0f;
+				}
+			}
+		}
+		else
+		{
+			if (data_type == INT32)
+			{
+				LTEN_ERR("Not yet implemented");
+				data_ptr = new int[numels];
+			}
+			else
+			{
+				if (data_type == UINT8)
+				{
+					LTEN_ERR("Not yet implemented");
+					data_ptr = new uint8_t[numels];
+				}
+				else
+				{
+					LTEN_ERR("Invalid tensor data type");
+					//return Tensor(); // keep compiler quiet
+				}
+			}
+		}
+
+		return TensorFromBuffer(dims_ptr, ndims, data_ptr, true, options);
+	}
+
 }
 
 
