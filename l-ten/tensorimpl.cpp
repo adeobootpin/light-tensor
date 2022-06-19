@@ -1518,6 +1518,7 @@ namespace lten {
 		if (CPU == options.device_type)
 		{
 			assert(0); // TODO implement cpu version
+			LTEN_ERR("Not yet implemented: mean for cpu");
 		}
 		else
 		{
@@ -1538,8 +1539,7 @@ namespace lten {
 
 		if (operand1.autograd_on())
 		{
-			misc1_ = -1; // let back prop know this is the version without axes
-
+			misc1_ = 0; // naxes is zero for gloabl mean
 			add_child(operand1);
 			grad_fn_ = ::mean_backward;
 			set_autograd(true);
@@ -1547,73 +1547,61 @@ namespace lten {
 	}
 
 	template<typename Dtype>
-	void TensorImpl<Dtype>::mean(TensorImpl<Dtype>& operand1, int dim)
+	void TensorImpl<Dtype>::mean(TensorImpl<Dtype>& operand1, const uint32_t* axes, int naxes)
 	{
-		uint64_t len;
-		uint64_t dims[MAX_DIMS];
-		MultiDimArray<Dtype>* md_array_ptr;
-		MultiDimArray<Dtype>* op1_md_array;
-		uint64_t i;
-		int index;
-		const uint64_t* src_sizes;
-		const uint64_t* src_strides;
-		int ndims;
+		int i;
 		TensorOps options;
-		uint64_t dim_size;
-		uint64_t ratio;
+		uint64_t dims_dst[MAX_DIMS];
+		uint64_t dims_tmp[MAX_DIMS];
+		int ndims_src;
+		int ndims_dst;
 
-		ndims = operand1.get_ndims();
-		if (dim >= ndims)
+
+		ndims_src = operand1.get_ndims();
+
+		for (i = 0; i < naxes; i++)
 		{
-			LTEN_ERR("Invalid index");
+			if (axes[i] >= static_cast<uint32_t>(ndims_src))
+			{
+				LTEN_ERR("Invalid index");
+			}
 		}
 
 		options.data_type = operand1.get_data_type();
 		options.device_type = operand1.get_device();
 		options.device_index = operand1.get_device_index();
 
-		op1_md_array = operand1.get_mdarray();
 
-		src_strides = op1_md_array->GetStrides();
-		src_sizes = operand1.get_sizes();
+		memcpy(dims_tmp, operand1.get_sizes(), sizeof(uint64_t) * ndims_src);
 
-		len = 0;
-		index = 0;
-		for (i = 0; i < ndims; i++)
+		for (i = 0; i < naxes; i++)
 		{
-			if (i != dim)
+			dims_tmp[axes[i]] = 0; // set to an invalid value
+		}
+
+		ndims_dst = 0;
+		for (i = 0; i < ndims_src; i++)
+		{
+			if (dims_tmp[i])
 			{
-				dims[index] = src_sizes[i];
-				len *= dims[index];
-				index++;
+				dims_dst[ndims_dst] = dims_tmp[i];
+				ndims_dst++;
 			}
 		}
 
-		LTEN_ERR_CHECK(allocate(dims, ndims - 1, &options));
-
-		md_array_ptr = get_mdarray();
-		dim_size = src_sizes[dim];
-
-		if (dim > 0)
-		{
-			ratio = src_strides[dim - 1] / src_strides[dim];
-		}
-		else
-		{
-			ratio = 1;
-		}
-
+		LTEN_ERR_CHECK(allocate(dims_dst, ndims_dst, &options));
 
 		if (CPU == options.device_type)
 		{
-			cpu_mean(op1_md_array->GetDataPtr(), md_array_ptr->GetDataPtr(), get_numels(), ratio, dim_size, src_strides[dim]);
+			//cpu_mean((Dtype*)get_data_ptr(), (Dtype*)operand1.get_data_ptr(), get_numels(), get_strides(), operand1.get_strides(), ndims_dst, ndims_src, operand1.get_sizes(), axes);
+			LTEN_ERR("Not yet implemented: mean for cpu"); // need to copy and clean up implementation from merge3
 		}
 		else
 		{
 			if (GPU == options.device_type)
 			{
 #ifdef USE_CUDA
-				gpu_mean(op1_md_array->GetDataPtr(), md_array_ptr->GetDataPtr(), get_numels(), ratio, dim_size, src_strides[dim]);
+				gpu_mean((Dtype*)get_data_ptr(), (Dtype*)operand1.get_data_ptr(), get_numels(), get_strides(), operand1.get_strides(), ndims_dst, ndims_src, operand1.get_sizes(), axes);
 #else
 				LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
 #endif
@@ -1624,89 +1612,70 @@ namespace lten {
 			}
 		}
 
-
-		md_array_ptr->Reshape(ndims);
-
 		if (operand1.autograd_on())
 		{
-			misc1_ = dim; // save this for back prop
-
 			add_child(operand1);
 			grad_fn_ = ::mean_backward;
 			set_autograd(true);
 		}
-
 	}
 
 
 	template<typename Dtype>
-	void TensorImpl<Dtype>::var(TensorImpl<Dtype>& operand1, int dim)
+	void TensorImpl<Dtype>::var(TensorImpl& operand1, const uint32_t* axes, int naxes)
 	{
-		uint64_t len;
-		uint64_t dims[MAX_DIMS];
-		MultiDimArray<Dtype>* md_array_ptr;
-		MultiDimArray<Dtype>* op1_md_array;
-		uint64_t i;
-		int index;
-		const uint64_t* src_sizes;
-		const uint64_t* src_strides;
-		int ndims;
+		int i;
 		TensorOps options;
-		uint64_t dim_size;
-		uint64_t ratio;
+		uint64_t dims_dst[MAX_DIMS];
+		uint64_t dims_tmp[MAX_DIMS];
+		int ndims_src;
+		int ndims_dst;
 
-		ndims = operand1.get_ndims();
-		if (dim >= ndims)
+
+		ndims_src = operand1.get_ndims();
+
+		for (i = 0; i < naxes; i++)
 		{
-			LTEN_ERR("Invalid index");
+			if (axes[i] >= static_cast<uint32_t>(ndims_src))
+			{
+				LTEN_ERR("Invalid index");
+			}
 		}
 
 		options.data_type = operand1.get_data_type();
 		options.device_type = operand1.get_device();
 		options.device_index = operand1.get_device_index();
 
-		op1_md_array = operand1.get_mdarray();
 
-		src_strides = op1_md_array->GetStrides();
-		src_sizes = operand1.get_sizes();
+		memcpy(dims_tmp, operand1.get_sizes(), sizeof(uint64_t) * ndims_src);
 
-		len = 0;
-		index = 0;
-		for (i = 0; i < ndims; i++)
+		for (i = 0; i < naxes; i++)
 		{
-			if (i != dim)
+			dims_tmp[axes[i]] = 0; // set to an invalid value
+		}
+
+		ndims_dst = 0;
+		for (i = 0; i < ndims_src; i++)
+		{
+			if (dims_tmp[i])
 			{
-				dims[index] = src_sizes[i];
-				len *= dims[index];
-				index++;
+				dims_dst[ndims_dst] = dims_tmp[i];
+				ndims_dst++;
 			}
 		}
 
-		LTEN_ERR_CHECK(allocate(dims, ndims - 1, &options));
-
-		md_array_ptr = get_mdarray();
-		dim_size = src_sizes[dim];
-
-		if (dim > 0)
-		{
-			ratio = src_strides[dim - 1] / src_strides[dim];
-		}
-		else
-		{
-			ratio = 1;
-		}
-
+		LTEN_ERR_CHECK(allocate(dims_dst, ndims_dst, &options));
 
 		if (CPU == options.device_type)
 		{
-			cpu_var(op1_md_array->GetDataPtr(), md_array_ptr->GetDataPtr(), get_numels(), ratio, dim_size, src_strides[dim]);
+			//cpu_var((Dtype*)get_data_ptr(), (Dtype*)operand1.get_data_ptr(), get_numels(), get_strides(), operand1.get_strides(), ndims_dst, ndims_src, operand1.get_sizes(), axes);
 		}
 		else
 		{
 			if (GPU == options.device_type)
 			{
 #ifdef USE_CUDA
-				gpu_var(op1_md_array->GetDataPtr(), md_array_ptr->GetDataPtr(), get_numels(), ratio, dim_size, src_strides[dim]);
+				gpu_var((Dtype*)get_data_ptr(), (Dtype*)operand1.get_data_ptr(), get_numels(), get_strides(), operand1.get_strides(), ndims_dst, ndims_src, operand1.get_sizes(), axes);
 #else
 				LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
 #endif
@@ -1717,13 +1686,8 @@ namespace lten {
 			}
 		}
 
-
-		md_array_ptr->Reshape(ndims);
-
 		if (operand1.autograd_on())
 		{
-			misc1_ = dim; // save this for back prop
-
 			add_child(operand1);
 			grad_fn_ = ::var_backward;
 			set_autograd(true);
@@ -2280,8 +2244,8 @@ namespace lten {
 	template void TensorImpl<float>::sum(TensorImpl<float>& operand1);
 	template void TensorImpl<float>::sum(TensorImpl<float>& operand1, int dim);
 	template void TensorImpl<float>::mean(TensorImpl<float>& operand1);
-	template void TensorImpl<float>::mean(TensorImpl<float>& operand1, int dim);
-	template void TensorImpl<float>::var(TensorImpl<float>& operand1, int dim);
+	template void TensorImpl<float>::mean(TensorImpl<float>& operand1, const uint32_t* axes, int naxes);
+	template void TensorImpl<float>::var(TensorImpl<float>& operand1, const uint32_t* axes, int naxes);
 	template void TensorImpl<float>::std(TensorImpl<float>& operand1, int dim);
 	template void TensorImpl<float>::log(TensorImpl<float>& operand1);
 	template void TensorImpl<float>::sig(TensorImpl<float>& operand1);
@@ -2315,8 +2279,8 @@ namespace lten {
 	template void TensorImpl<int>::sum(TensorImpl<int>& operand1);
 	template void TensorImpl<int>::sum(TensorImpl<int>& operand1, int dim);
 	template void TensorImpl<int>::mean(TensorImpl<int>& operand1);
-	template void TensorImpl<int>::mean(TensorImpl<int>& operand1, int dim);
-	template void TensorImpl<int>::var(TensorImpl<int>& operand1, int dim);
+	template void TensorImpl<int>::mean(TensorImpl<int>& operand1, const uint32_t* axes, int naxes);
+	template void TensorImpl<int>::var(TensorImpl<int>& operand1, const uint32_t* axes, int naxes);
 	template void TensorImpl<int>::std(TensorImpl<int>& operand1, int dim);
 	template void TensorImpl<int>::log(TensorImpl<int>& operand1);
 	template void TensorImpl<int>::sig(TensorImpl<int>& operand1);
@@ -2350,8 +2314,8 @@ namespace lten {
 	template void TensorImpl<uint8_t>::sum(TensorImpl<uint8_t>& operand1);
 	template void TensorImpl<uint8_t>::sum(TensorImpl<uint8_t>& operand1, int dim);
 	template void TensorImpl<uint8_t>::mean(TensorImpl<uint8_t>& operand1);
-	template void TensorImpl<uint8_t>::mean(TensorImpl<uint8_t>& operand1, int dim);
-	template void TensorImpl<uint8_t>::var(TensorImpl<uint8_t>& operand1, int dim);
+	template void TensorImpl<uint8_t>::mean(TensorImpl<uint8_t>& operand1, const uint32_t* axes, int naxes);
+	template void TensorImpl<uint8_t>::var(TensorImpl<uint8_t>& operand1, const uint32_t* axes, int naxes);
 	template void TensorImpl<uint8_t>::std(TensorImpl<uint8_t>& operand1, int dim);
 	template void TensorImpl<uint8_t>::log(TensorImpl<uint8_t>& operand1);
 	template void TensorImpl<uint8_t>::sig(TensorImpl<uint8_t>& operand1);

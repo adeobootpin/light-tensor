@@ -881,7 +881,12 @@ namespace lten {
 			return Tensor();
 		}
 
-		Tensor mean(int dim)
+		Tensor mean(uint32_t axis)
+		{
+			return mean(&axis, 1);
+		}
+
+		Tensor mean(const uint32_t* axes, int naxes)
 		{
 			dtype data_type = smart_ptr_->get_data_type();
 
@@ -893,7 +898,7 @@ namespace lten {
 
 				intrusive_ptr<TensorImplBase> result(resultImpl);
 
-				resultImpl->mean(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), dim);
+				resultImpl->mean(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), axes, naxes);
 
 				return Tensor(result);
 			}
@@ -907,7 +912,7 @@ namespace lten {
 
 					intrusive_ptr<TensorImplBase> result(resultImpl);
 
-					resultImpl->mean(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), dim);
+					resultImpl->mean(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), axes, naxes);
 
 					return Tensor(result);
 				}
@@ -921,7 +926,7 @@ namespace lten {
 
 						intrusive_ptr<TensorImplBase> result(resultImpl);
 
-						resultImpl->mean(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), dim);
+						resultImpl->mean(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), axes, naxes);
 
 						return Tensor(result);
 					}
@@ -932,7 +937,12 @@ namespace lten {
 			return Tensor();
 		}
 
-		Tensor var(int dim)
+		Tensor var(uint32_t axis)
+		{
+			return var(&axis, 1);
+		}
+
+		Tensor var(const uint32_t* axes, int naxes)
 		{
 			dtype data_type = smart_ptr_->get_data_type();
 
@@ -944,7 +954,7 @@ namespace lten {
 
 				intrusive_ptr<TensorImplBase> result(resultImpl);
 
-				resultImpl->var(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), dim);
+				resultImpl->var(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), axes, naxes);
 
 				return Tensor(result);
 			}
@@ -958,7 +968,7 @@ namespace lten {
 
 					intrusive_ptr<TensorImplBase> result(resultImpl);
 
-					resultImpl->var(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), dim);
+					resultImpl->var(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), axes, naxes);
 
 					return Tensor(result);
 				}
@@ -972,7 +982,7 @@ namespace lten {
 
 						intrusive_ptr<TensorImplBase> result(resultImpl);
 
-						resultImpl->var(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), dim);
+						resultImpl->var(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), axes, naxes);
 
 						return Tensor(result);
 					}

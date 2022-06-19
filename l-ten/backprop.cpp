@@ -1478,6 +1478,35 @@ void sum_backward1(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtyp
 template<typename Dtype>
 void mean_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
+	int naxes;
+	lten::device device_type;
+
+	naxes = static_cast<int>(parent_ptr->misc1_);
+
+	device_type = parent_ptr->get_device();
+
+	if (lten::CPU == device_type)
+	{
+		LTEN_ERR("Not yet implemented: mean_backward CPU");
+	}
+	else
+	{
+		if (lten::GPU == device_type)
+		{
+#ifdef USE_CUDA
+			gpu_mean_backward(bottom_gradient_ptr->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels());
+#else
+			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+		}
+		else
+		{
+			LTEN_ERR("Invalid tensor device type");
+		}
+	}
+
+
+	/*
 	int dim;
 	//uint64_t n, c, h, w;
 	//uint64_t N, C, H, W;
@@ -1534,6 +1563,7 @@ void mean_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtyp
 
 
 	top_gradient_ptr->Reshape(ndims);
+	*/
 
 }
 
@@ -2115,6 +2145,45 @@ void conv3_cudnn_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArr
 		conv3d_ptr->get_bwd_workspace(),
 		conv3d_ptr->get_bwd_workspace_size(),
 		&beta, conv3d_ptr->get_inputDesc(), bottom_gradient_ptr->GetDataPtr());
+
+}
+
+template<typename Dtype>
+void conv_cudnn_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
+{
+	lten::conv_CUDNN* conv_ptr;
+	float alpha;
+	float beta;
+	cudnnHandle_t cudnnHandle;
+
+	conv_ptr = static_cast<lten::conv_CUDNN*>(parent_ptr->misc_ptr1_);
+
+	cudnnHandle = lten::CUDA_globlas::singleton()->get_cudnn_handle(0);
+
+	alpha = 1.0f;
+	beta = 1.0f; // perform additive processing here since these are the *actual* gradient buffers (i.e. not gradients to be passed to children since weights and biases are terminal leaves)
+
+	if (conv_ptr->is_using_bias())
+	{
+		cudnnConvolutionBackwardBias(cudnnHandle, &alpha, conv_ptr->get_outputDesc(), top_gradient_ptr->GetDataPtr(), &beta, conv_ptr->get_biasDesc(), conv_ptr->get_bias()->get_grad_ptr());
+	}
+
+	assert(child_index == 0);
+	cudnnConvolutionBackwardFilter(cudnnHandle, &alpha, conv_ptr->get_inputDesc(), children_ptr_array[child_index]->get_data_ptr(), conv_ptr->get_outputDesc(), top_gradient_ptr->GetDataPtr(),
+		conv_ptr->get_convDesc(),
+		conv_ptr->get_bwf_algo(),
+		conv_ptr->get_bwf_workspace(),
+		conv_ptr->get_bwf_workspace_size(),
+		&beta, conv_ptr->get_wtDesc(), conv_ptr->get_weights()->get_grad_ptr());
+
+
+	beta = 0.0f; // write gradients for children into uninitialized scratch buffer (additive processing handled by caller)
+	cudnnConvolutionBackwardData(cudnnHandle, &alpha, conv_ptr->get_wtDesc(), conv_ptr->get_weights()->get_data_ptr(), conv_ptr->get_outputDesc(), top_gradient_ptr->GetDataPtr(),
+		conv_ptr->get_convDesc(),
+		conv_ptr->get_bwd_algo(),
+		conv_ptr->get_bwd_workspace(),
+		conv_ptr->get_bwd_workspace_size(),
+		&beta, conv_ptr->get_inputDesc(), bottom_gradient_ptr->GetDataPtr());
 
 }
 
@@ -4998,18 +5067,21 @@ template void masked_fill_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, 
 #ifdef USE_CUDA
 template void conv2_cudnn_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void conv3_cudnn_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
+template void conv_cudnn_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void softmax_cudnn_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void gru_cudnn_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void bn_cudnn_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void pooling_cudnn_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void conv2_cudnn_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void conv3_cudnn_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
+template void conv_cudnn_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void softmax_cudnn_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void gru_cudnn_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void bn_cudnn_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void pooling_cudnn_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void conv2_cudnn_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void conv3_cudnn_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
+template void conv_cudnn_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void softmax_cudnn_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void gru_cudnn_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void bn_cudnn_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);

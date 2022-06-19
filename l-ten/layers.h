@@ -524,6 +524,90 @@ namespace lten {
 	};
 
 #ifdef USE_CUDA
+	class conv_CUDNN : public Module
+	{
+	public:
+		conv_CUDNN(const int expected_batch_size, const int channels_in, const int channels_out, const int ndims, const int* dims, const int* kernel, const int* padding, const int* stride, bool use_bias )
+		{
+			dims_ = new int[ndims];
+			kernel_ = new int[ndims];
+			padding_ = new int[ndims];
+			stride_ = new int[ndims];
+			output_dims_ = new uint64_t[ndims + 2]; //NCHW, NCDHW ...
+
+			memcpy(dims_, dims, sizeof(int) * ndims);
+			memcpy(kernel_, kernel, sizeof(int) * ndims);
+			memcpy(padding_, padding, sizeof(int) * ndims);
+			memcpy(stride_, stride, sizeof(int) * ndims);
+
+			channels_in_ = channels_in;
+			channels_out_ = channels_out;
+
+			use_bias_ = use_bias;
+			batch_size_ = expected_batch_size;
+			ndims_ = ndims;
+		}
+
+		~conv_CUDNN() {}
+		bool init();
+		Tensor forward(Tensor& input);
+		void clear_gradients();
+		Tensor* get_weights() { return weight_ptr_; }
+		Tensor* get_bias() { return bias_ptr_; }
+		std::vector<Tensor*> get_all_weights();
+		void to(device target_device, int target_device_index) {}
+		bool is_using_bias() { return use_bias_; }
+
+		cudnnTensorDescriptor_t get_inputDesc() { return inputDesc_; }
+		cudnnTensorDescriptor_t get_outputDesc() { return outputDesc_; }
+		cudnnConvolutionDescriptor_t get_convDesc() { return convDesc_; }
+		cudnnFilterDescriptor_t get_wtDesc() { return wtDesc_; }
+		cudnnTensorDescriptor_t get_biasDesc() { return biasDesc_; }
+		cudnnConvolutionBwdFilterAlgo_t get_bwf_algo() { return bwf_algo_; }
+		cudnnConvolutionBwdDataAlgo_t get_bwd_algo() { return bwd_algo_; }
+		void* get_workspace() { return workspace_; }
+		size_t get_workspace_size() { return workspace_size_; }
+
+		void* get_bwf_workspace() { return bwf_workspace_; }
+		size_t get_bwf_workspace_size() { return bwf_workspace_size_; }
+
+		void* get_bwd_workspace() { return bwd_workspace_; }
+		size_t get_bwd_workspace_size() { return bwd_workspace_size_; }
+
+	private:
+		uint32_t batch_size_;		
+		uint32_t channels_in_;
+		uint32_t channels_out_;
+		int* dims_;
+		int* kernel_;
+		int* padding_;
+		int* stride_;
+		Tensor* weight_ptr_;
+		Tensor* bias_ptr_;
+		bool use_bias_;
+		uint32_t ndims_;
+		uint64_t* output_dims_;
+
+		cudnnTensorDescriptor_t inputDesc_;
+		cudnnTensorDescriptor_t outputDesc_;
+		cudnnConvolutionDescriptor_t convDesc_;
+		cudnnFilterDescriptor_t wtDesc_;
+		cudnnTensorDescriptor_t biasDesc_;
+		cudnnConvolutionFwdAlgo_t algo_;
+		cudnnConvolutionBwdFilterAlgo_t bwf_algo_;
+		cudnnConvolutionBwdDataAlgo_t bwd_algo_;
+
+		void* workspace_;
+		size_t workspace_size_;
+
+		void* bwf_workspace_;
+		size_t bwf_workspace_size_;
+
+		void* bwd_workspace_;
+		size_t bwd_workspace_size_;
+
+	};
+
 	class conv2d_CUDNN : public Module
 	{
 	public:

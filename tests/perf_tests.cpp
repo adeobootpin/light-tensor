@@ -6,7 +6,7 @@
 int conv3d_perf_test();
 void mean_test()
 {
-	//conv3d_perf_test();
+	conv3d_perf_test();
 
 
 	int i;
@@ -53,13 +53,14 @@ void mean_test()
 int ReadDataFromFile(const char* file_name, void** pp_data, size_t* data_size);
 int conv3d_perf_test()
 {
+	/*
 	lten::Tensor a;
 	lten::Tensor b;
 
 	lten::Tensor a_gpu;
 
 	int i;
-	uint64_t numels = 64000;
+	uint64_t numels = 1;
 	float* a_buffer = new float[numels];
 	a = lten::TensorFromBuffer({ numels }, a_buffer, false);
 	float sum = 0;
@@ -73,7 +74,7 @@ int conv3d_perf_test()
 		isum += i + 1;
 	}
 
-	/*
+	
 	float val[32];
 	for (int thread = 0; thread < 32; thread++)
 	{
@@ -88,9 +89,9 @@ int conv3d_perf_test()
 	{
 		sum2 += val[thread];
 	}
-	*/
+	
 
-
+	
 	b = a.mean(0);
 	std::cout << b << std::endl;
 
@@ -100,6 +101,7 @@ int conv3d_perf_test()
 	std::cout << b << std::endl;
 	printf("sum: %f", sum);
 	sum /= numels;
+	*/
 
 	lten::conv3d_CUDNN* conv3d;
 

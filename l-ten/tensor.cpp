@@ -245,14 +245,14 @@ namespace lten {
 		{
 			if (data_type == INT32)
 			{
-				LTEN_ERR("Not yet implemented");
+				LTEN_ERR("Not yet implemented: RandomTensor INT32");
 				data_ptr = new int[numels];
 			}
 			else
 			{
 				if (data_type == UINT8)
 				{
-					LTEN_ERR("Not yet implemented");
+					LTEN_ERR("Not yet implemented: RandomTensor UINT8");
 					data_ptr = new uint8_t[numels];
 				}
 				else
