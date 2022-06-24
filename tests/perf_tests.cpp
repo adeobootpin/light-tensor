@@ -125,7 +125,83 @@ int conv3d_perf_test()
 	//bool lten::conv3d_CUDNN c3d;
 	//conv1 = register_module("conv1", lten::Conv2d(channels_in, channels_out, false, kernel_h, kernel_w, pad_h, pad_w, stride_h, stride_w));
 
+	delete conv3d;
 	return 0;
 }
 
 
+
+template<typename Dtype>
+int Comparexx(Dtype* A, Dtype* B, uint64_t len, Dtype error = 0)
+{
+	uint64_t i;
+
+	for (i = 0; i < len; i++)
+	{
+		if (fabs(A[i] - B[i]) > error)
+		{
+			return -1;
+		}
+	}
+	return 0;
+}
+
+void transpose_test()
+{
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+	int i;
+
+	lten::Tensor at;
+	lten::Tensor bt;
+
+	at = lten::RandomTensor({ 4, 32, 25088 }, nullptr);
+	at = at.to(lten::GPU);
+
+
+
+
+	lten::Tensor dt;
+	lten::Tensor ct;
+
+	dt = at.to(lten::CPU);
+	bt = at.transpose(1, 2);
+
+	ct = dt.transpose(1, 2);
+	bt = bt.to(lten::CPU);
+
+	int ret = Comparexx<float>((float*)bt.get_data_ptr(), (float*)ct.get_data_ptr(), (int)ct.get_numels(), 0);
+	if (!ret)
+	{
+		printf("all correct sir!\n");
+	}
+	return;
+
+
+
+
+
+
+
+
+
+	for (i = 0; i < 1000; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+		bt = at.transpose(1, 2);
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten::transpose [duration: %f sec]\n", nseconds);
+
+}

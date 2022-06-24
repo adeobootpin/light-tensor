@@ -524,6 +524,40 @@ public:
 		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
 	}
 
+	CUDA_MultiDimArray transpose(int dim_1, int dim_2)
+	{
+		CUDA_MultiDimArray result;
+		uint64_t dims_result[MAX_DIMS];
+		uint64_t temp;
+
+		if (dim_1 == dim_2 || dim_1 >= ndims_ || dim_2 >= ndims_)
+		{
+			LTEN_ERR("Invalid args");
+		}
+
+		memcpy(dims_result, dims_array_, sizeof(uint64_t) * ndims_);
+		temp = dims_result[dim_1];
+		dims_result[dim_1] = dims_result[dim_2];
+		dims_result[dim_2] = temp;
+
+		result.Allocate(dims_result, ndims_, nullptr, false);
+
+
+		//uint64_t transposed_strides[MAX_DIMS];
+		//memcpy(transposed_strides, result.GetStrides(), sizeof(uint64_t) * ndims_);
+
+		uint64_t strides[MAX_DIMS];
+		memcpy(strides, strides_array_, sizeof(uint64_t) * ndims_);
+
+		temp = strides[dim_1];
+		strides[dim_1] = strides[dim_2];
+		strides[dim_2] = temp;
+		
+		gpu_transpose((float*)data_ptr_, (float*)result.GetDataPtr(), numels_, strides, result.GetStrides(), ndims_);
+
+		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
+	}
+
 	CUDA_MultiDimArray cat(const CUDA_MultiDimArray& other, int dim)
 	{
 		CUDA_MultiDimArray result;

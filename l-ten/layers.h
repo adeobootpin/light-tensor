@@ -548,7 +548,8 @@ namespace lten {
 			ndims_ = ndims;
 		}
 
-		~conv_CUDNN() {}
+		~conv_CUDNN();
+
 		bool init();
 		Tensor forward(Tensor& input);
 		void clear_gradients();
@@ -719,7 +720,7 @@ namespace lten {
 			width_in_ = width_in;
 		}
 
-		~conv3d_CUDNN() {}
+		~conv3d_CUDNN();
 		bool init();
 		Tensor forward(Tensor& input);
 		void clear_gradients();

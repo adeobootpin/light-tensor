@@ -1982,39 +1982,13 @@ namespace lten {
 			if (GPU == options.device_type)
 			{
 #ifdef USE_CUDA
-				const uint64_t* strides;
-				const uint64_t* strides_transp;
-				uint64_t dims[MAX_DIMS];
-				uint64_t temp;
-				int ndims;
-
-				if (dim1 > dim2) // gpu_transpose expects dim1 < dim2
-				{
-					temp = dim1;
-					dim1 = dim2;
-					dim2 = static_cast<int>(temp);
-				}
-
-				//
-				// generate transposed dims
-				//
-				ndims = operand1.get_ndims();
-				memcpy(dims, operand1.get_sizes(), sizeof(uint64_t) * ndims);
-				temp = dims[dim1];
-				dims[dim1] = dims[dim2];
-				dims[dim2] = temp;
-
-				LTEN_ERR_CHECK(allocate(dims, ndims, &options));
-
-				strides = operand1.get_mdarray()->GetStrides();
-				strides_transp = get_mdarray()->GetStrides();
+				CUDA_MultiDimArray<Dtype> result;
 
 
-				gpu_transpose(static_cast<Dtype*>(operand1.get_data_ptr()), static_cast<Dtype*>(get_data_ptr()), dim1, dim2,
-					(int)strides[dim1], (int)strides[dim1 - 1], (int)strides[dim2], (int)strides[dim2 - 1],
-					(int)strides_transp[dim1], (int)strides_transp[dim1 - 1], (int)strides_transp[dim2], (int)strides_transp[dim2 - 1], operand1.get_numels());
+				result = (*(static_cast<CUDA_MultiDimArray<Dtype>*>(op1_md_array))).transpose(dim1, dim2);
 
-
+				LTEN_ERR_CHECK(allocate_from_buffer(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true, &options));
+				result.SetMemoryOwnership(false); // this TensorImpl<Dtype> needs to keep the md_array's buffer so set ownership accordingly
 #else
 				LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
 #endif

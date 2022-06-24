@@ -34,7 +34,6 @@ SOFTWARE.
 #include "math_fns.h"
 #include "error.h"
 
-enum { MAX_DIMS = 16 };
 
 class md_array_dim_iterator
 {

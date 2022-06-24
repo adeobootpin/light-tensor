@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <cstdint>
+#include <tuple>
 #include <stdio.h>
 #include "error.h"
 #include "utils.h"
@@ -247,7 +248,7 @@ void gpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_
 		len *= dims_src[axes[i]];
 	}
 
-	threads_per_block = GetNextPowerOf2(len);
+	threads_per_block = GetNextPowerOf2(static_cast<int>(len));
 
 	num_blocks = static_cast<int>(numels);
 
@@ -258,6 +259,80 @@ void gpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_
 }
 //-----------------------------------------------------------------------------------------------------
 
+
+
+
+//-----------------------------------------------------------------------------------------------------
+//
+// transpose functions
+//
+//-----------------------------------------------------------------------------------------------------
+const int defa_threads = 64;
+constexpr int num_threads = 64;
+constexpr int thread_work_size = 4;
+constexpr int block_work_size = 256;
+template<typename args_t>
+
+__device__ inline void arg_load(args_t *args, float* A, int idx, int remaining, OffsetCalc* input_offset_calculator)
+{
+	int thread_idx = threadIdx.x;
+	uint32_t offset;
+
+#pragma unroll
+	for (int i = 0; i < thread_work_size; i++)
+	{
+		if (thread_idx >= remaining)
+		{
+			return;
+		}
+		int linear_idx = thread_idx + block_work_size * idx;
+
+		input_offset_calculator->GetOffset(linear_idx, &offset);
+
+		std::get<0>(args[i]) = A[offset];
+
+		thread_idx += num_threads;
+	}
+}
+
+
+__global__ void gpu_transpose_kernel2_torch_way(float* A, float* At, int N, OffsetCalc offs_calc)
+{
+	int remaining = N - block_work_size * blockIdx.x;
+	int index = threadIdx.x + block_work_size * blockIdx.x;;
+	std::tuple<float> args[thread_work_size];
+
+	arg_load(args, A, blockIdx.x, remaining, &offs_calc);
+
+#pragma unroll
+	for (int i = 0; i < thread_work_size; i++)
+	{
+		At[index] = std::get<0>(args[i]);
+		index += num_threads;
+	}
+}
+
+template<typename Dtype>
+void gpu_transpose(const Dtype* A, Dtype* At, const uint64_t numels, const uint64_t* a_strides, const uint64_t* at_strides, const int ndims)
+{
+	dim3 dimGrid;
+	dim3 dimBlock;
+	int num_blocks;
+	uint64_t N;
+
+
+	OffsetCalc off_calc(ndims, a_strides, at_strides);
+
+
+	N = numels;
+
+	assert(N < UINT_MAX); // offsets are 32 bit
+
+	num_blocks = (static_cast<int>(N) + 256 - 1) / 256;
+
+	gpu_transpose_kernel2_torch_way << < num_blocks, defa_threads >> > ((float*)A, (float*)At, N, off_calc);
+}
+//-----------------------------------------------------------------------------------------------------
 
 
 //-----------------------------------------------------------------------------------------------------
@@ -447,3 +522,7 @@ template void gpu_mean<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t
 template void gpu_var<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
 template void gpu_var<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
 template void gpu_var<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
+
+template void gpu_transpose<float>(const float* A, float* At, const uint64_t numels, const uint64_t* a_strides, const uint64_t* at_strides, const int ndims);
+template void gpu_transpose<int>(const int* A, int* At, const uint64_t numels, const uint64_t* a_strides, const uint64_t* at_strides, const int ndims);
+template void gpu_transpose<uint8_t>(const uint8_t* A, uint8_t* At, const uint64_t numels, const uint64_t* a_strides, const uint64_t* at_strides, const int ndims);

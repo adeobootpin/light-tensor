@@ -311,14 +311,14 @@ void GetStrides(int* dims, int* strides, int ndims)
 	}
 }
 
-int GetNextPowerOf2(int number)
+uint32_t GetNextPowerOf2(int number)
 {
 	float log2;
 
 	log2 = log((float)number) / log(2.0f);
 	log2 = ceil(log2);
 
-	return (int)pow(2.0f, log2);
+	return (uint32_t)pow(2.0f, log2);
 }
 
 void ltenFail(const char* msg, const char* file, const char* line, const char* func)

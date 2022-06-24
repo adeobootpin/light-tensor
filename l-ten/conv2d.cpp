@@ -802,6 +802,21 @@ namespace lten {
 		return true;
 	}
 
+	conv3d_CUDNN::~conv3d_CUDNN()
+	{
+		cudnnErrCheck(cudnnDestroyTensorDescriptor(inputDesc_));
+		cudnnErrCheck(cudnnDestroyTensorDescriptor(outputDesc_));
+		cudnnErrCheck(cudnnDestroyTensorDescriptor(biasDesc_));
+		cudnnErrCheck(cudnnDestroyFilterDescriptor(wtDesc_));
+		cudnnErrCheck(cudnnDestroyConvolutionDescriptor(convDesc_));
+
+		FreeMemoryOnGPU(workspace_);
+		FreeMemoryOnGPU(bwf_workspace_);
+		FreeMemoryOnGPU(bwd_workspace_);
+
+		delete weight_ptr_;
+		delete bias_ptr_;
+	}
 
 	Tensor conv3d_CUDNN::forward(Tensor& input)
 	{
@@ -953,7 +968,6 @@ namespace lten {
 		cudnnErrCheck(cudnnCreateConvolutionDescriptor(&convDesc_));
 
 
-
 		dilationA[0] = 1;
 		dilationA[1] = 1;
 		dilationA[2] = 1;
@@ -1048,6 +1062,10 @@ namespace lten {
 			*bias_ptr_ = AllocateTensor(biasDims, ndims_ + 2, &options);
 			bias_ptr_->set_autograd(true);
 		}
+		else
+		{
+			bias_ptr_ = nullptr;
+		}
 
 		
 		std::random_device generator;
@@ -1090,6 +1108,28 @@ namespace lten {
 		
 
 		return true;
+	}
+
+	conv_CUDNN::~conv_CUDNN() 
+	{
+		cudnnErrCheck(cudnnDestroyTensorDescriptor(inputDesc_));
+		cudnnErrCheck(cudnnDestroyTensorDescriptor(outputDesc_));
+		cudnnErrCheck(cudnnDestroyTensorDescriptor(biasDesc_));
+		cudnnErrCheck(cudnnDestroyFilterDescriptor(wtDesc_));
+		cudnnErrCheck(cudnnDestroyConvolutionDescriptor(convDesc_));
+
+		FreeMemoryOnGPU(workspace_);
+		FreeMemoryOnGPU(bwf_workspace_);
+		FreeMemoryOnGPU(bwd_workspace_);
+
+		delete dims_;
+		delete kernel_;
+		delete padding_;
+		delete stride_;
+		delete output_dims_;
+
+		delete weight_ptr_;
+		delete bias_ptr_;
 	}
 
 

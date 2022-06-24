@@ -58,6 +58,11 @@ LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be s
 
 void FreeMemoryOnGPU(void* memory)
 {
+	if (!memory)
+	{
+		return;
+	}
+
 #ifdef USE_CUDA
 #ifdef USE_MEMORYPOOL
 	lten::MISC_globals::singleton()->get_gpu_memorypool()->FreeMemory(memory);

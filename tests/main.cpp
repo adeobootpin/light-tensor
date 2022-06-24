@@ -3,6 +3,9 @@
 
 int main(int argc, char* argv[])
 {
+	//mean_test();
+	transpose_test();
+
 	int ret;
 	int total_tests;
 	int total_tests_passed;
