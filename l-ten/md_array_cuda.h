@@ -543,9 +543,6 @@ public:
 		result.Allocate(dims_result, ndims_, nullptr, false);
 
 
-		//uint64_t transposed_strides[MAX_DIMS];
-		//memcpy(transposed_strides, result.GetStrides(), sizeof(uint64_t) * ndims_);
-
 		uint64_t strides[MAX_DIMS];
 		memcpy(strides, strides_array_, sizeof(uint64_t) * ndims_);
 

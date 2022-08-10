@@ -3,8 +3,9 @@
 
 int main(int argc, char* argv[])
 {
-	//mean_test();
-	transpose_test();
+	mean_test2(); return 0;
+	//transpose_test();
+	//transpose_backwards_test();
 
 	int ret;
 	int total_tests;

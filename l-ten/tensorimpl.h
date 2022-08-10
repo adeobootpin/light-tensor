@@ -193,7 +193,7 @@ namespace lten {
 		void var(TensorImpl& operand1, const uint32_t* axes, int naxes);
 		void std(TensorImpl& operand1, int dim);
 		void sub_array(TensorImpl& operand1, int index); // initialize TensorImpl as a sub array of another (for [][][]... array indexing)
-		void reshape(TensorImpl& operand1, const std::initializer_list<uint64_t>& dims);
+		void reshape(TensorImpl& operand1, const uint64_t* dims, int ndims);
 		void squeeze(TensorImpl& operand1, int dim);
 		void unsqueeze(TensorImpl& operand1, int dim);
 		void transpose(TensorImpl& operand1, int dim1, int dim2);

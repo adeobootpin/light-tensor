@@ -309,6 +309,7 @@ namespace lten {
 		}
 		else
 		{
+			graph_ref_count_--; // <-- just added this, need to test to make sure nothing gets broken
 			for (i = 0; i < num_children_; i++)
 			{
 				child_ptr = children_[i];
@@ -4055,18 +4056,17 @@ void transpose_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray
 		if (lten::GPU == device_type)
 		{
 #ifdef USE_CUDA	
-			const uint64_t* strides;
-			const uint64_t* strides_transp;
+			int temp;
+			uint64_t strides[MAX_DIMS];
+			int ndims = top_gradient_ptr->GetNDims();
 
-			strides = top_gradient_ptr->GetStrides();
-			strides_transp = bottom_gradient_ptr->GetStrides();
+			memcpy(strides, top_gradient_ptr->GetStrides(), sizeof(uint64_t) * ndims);
 
+			temp = strides[dim1];
+			strides[dim1] = strides[dim2];
+			strides[dim2] = temp;
 
-			gpu_transpose(static_cast<Dtype*>(top_gradient_ptr->GetDataPtr()), static_cast<Dtype*>(bottom_gradient_ptr->GetDataPtr()), dim1, dim2,
-				(int)strides[dim1], (int)strides[dim1 - 1], (int)strides[dim2], (int)strides[dim2 - 1],
-				(int)strides_transp[dim1], (int)strides_transp[dim1 - 1], (int)strides_transp[dim2], (int)strides_transp[dim2 - 1], top_gradient_ptr->GetNumels());
-
-
+			gpu_transpose((float*)top_gradient_ptr->GetDataPtr(), (float*)bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), strides, bottom_gradient_ptr->GetStrides(), ndims);
 
 #else
 			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");

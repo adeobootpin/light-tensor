@@ -33,6 +33,8 @@ int quantized_MNIST_test(const char* MNIST_training_images, const char* MNIST_tr
 
 // performance tests
 void mean_test();
+void mean_test2();
 void transpose_test();
+void transpose_backwards_test();
 
 #endif // TESTS_H

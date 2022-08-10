@@ -50,6 +50,67 @@ void mean_test()
 }
 
 
+template<typename Dtype>
+int Comparexx(Dtype* A, Dtype* B, uint64_t len, Dtype error = 0)
+{
+	uint64_t i;
+
+	for (i = 0; i < len; i++)
+	{
+		if (fabs(A[i] - B[i]) > error)
+		{
+			return -1;
+		}
+	}
+	return 0;
+}
+
+void mean_test2()
+{
+	int i;
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+
+	lten::Tensor a;
+	lten::Tensor b;
+
+	a = lten::RandomTensor({ 8, 448, 768+1 });
+
+	uint64_t len = a.get_numels();
+	float* data = (float*)a.get_data_ptr();
+
+	for (uint64_t j = 0; j < len; j++)
+	{
+		((float*)a.get_data_ptr())[j] = 1.0f;
+	}
+	
+	a = a.to(lten::GPU);
+
+	uint32_t axes[] = { 1 };
+
+	//for (i = 0; i < 10; i++)
+	for (i = 0; i < 1; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+
+		b = a.mean(axes, 1);
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten MeanTest [duration: %f sec]\n", nseconds);
+}
+
+
 int ReadDataFromFile(const char* file_name, void** pp_data, size_t* data_size);
 int conv3d_perf_test()
 {
@@ -131,20 +192,6 @@ int conv3d_perf_test()
 
 
 
-template<typename Dtype>
-int Comparexx(Dtype* A, Dtype* B, uint64_t len, Dtype error = 0)
-{
-	uint64_t i;
-
-	for (i = 0; i < len; i++)
-	{
-		if (fabs(A[i] - B[i]) > error)
-		{
-			return -1;
-		}
-	}
-	return 0;
-}
 
 void transpose_test()
 {
@@ -159,11 +206,12 @@ void transpose_test()
 	lten::Tensor bt;
 
 	at = lten::RandomTensor({ 4, 32, 25088 }, nullptr);
+	//at = lten::RandomTensor({ 7, 13, 47 }, nullptr);
 	at = at.to(lten::GPU);
 
 
 
-
+	/*
 	lten::Tensor dt;
 	lten::Tensor ct;
 
@@ -174,18 +222,12 @@ void transpose_test()
 	bt = bt.to(lten::CPU);
 
 	int ret = Comparexx<float>((float*)bt.get_data_ptr(), (float*)ct.get_data_ptr(), (int)ct.get_numels(), 0);
-	if (!ret)
+	if (ret)
 	{
 		printf("all correct sir!\n");
 	}
 	return;
-
-
-
-
-
-
-
+	*/
 
 
 	for (i = 0; i < 1000; i++)
@@ -204,4 +246,49 @@ void transpose_test()
 	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
 	printf("lten::transpose [duration: %f sec]\n", nseconds);
 
+}
+
+
+void transpose_backwards_test()
+{
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+	int i;
+
+	lten::Tensor at;
+	lten::Tensor bt;
+	lten::Tensor top_gradient;
+
+	at = lten::RandomTensor({ 2, 128, 256 * 256 }, nullptr);
+	//at = lten::RandomTensor({ 256, 128, 64 }, nullptr);
+	at.set_autograd(true);
+	at = at.to(lten::GPU);
+
+
+	bt = at.transpose(0, 2);
+	top_gradient = lten::RandomTensor(bt.get_sizes(), bt.get_ndims());
+
+	top_gradient = top_gradient.to(lten::GPU);
+
+
+
+	for (i = 0; i < 10000; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+
+		bt.backward(top_gradient.get_mdarray<float>());
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten::transpose backwards [duration: %f sec]\n", nseconds);
 }

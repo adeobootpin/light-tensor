@@ -1210,7 +1210,8 @@ namespace lten {
 			return Tensor();
 		}
 
-		Tensor reshape(const std::initializer_list<uint64_t>& dims)
+
+		Tensor reshape(const uint64_t* dims, int ndims)
 		{
 			dtype data_type = smart_ptr_->get_data_type();
 
@@ -1222,7 +1223,7 @@ namespace lten {
 
 				intrusive_ptr<TensorImplBase> result(resultImpl);
 
-				resultImpl->reshape(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), dims);
+				resultImpl->reshape(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), dims, ndims);
 
 				return Tensor(result);
 			}
@@ -1236,7 +1237,7 @@ namespace lten {
 
 					intrusive_ptr<TensorImplBase> result(resultImpl);
 
-					resultImpl->reshape(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), dims);
+					resultImpl->reshape(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), dims, ndims);
 
 					return Tensor(result);
 				}
@@ -1250,7 +1251,76 @@ namespace lten {
 
 						intrusive_ptr<TensorImplBase> result(resultImpl);
 
-						resultImpl->reshape(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), dims);
+						resultImpl->reshape(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), dims, ndims);
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
+
+		Tensor reshape(const std::initializer_list<uint64_t>& dims)
+		{
+			uint64_t dims_array[MAX_DIMS];
+			int i;
+			int ndims;
+
+			ndims = static_cast<int>(dims.size());
+
+			if (ndims > MAX_DIMS)
+			{
+				LTEN_ERR("ndims > MAX_DIMS");
+			}
+
+			i = 0;
+			for (uint64_t dim : dims)
+			{
+				dims_array[i++] = dim;
+			}
+
+
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				resultImpl->reshape(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), dims_array, ndims);
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					resultImpl->reshape(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), dims_array, ndims);
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						resultImpl->reshape(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), dims_array, ndims);
 
 						return Tensor(result);
 					}

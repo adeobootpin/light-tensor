@@ -310,6 +310,108 @@ void cpu_sum_backward(Dtype* dst, const Dtype* src, const uint64_t numels, const
 
 // ND tensor mean
 template<typename Dtype>
+void cpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes)
+{
+	uint64_t offset_src_save;
+	uint64_t offset_src;
+	uint64_t offset_dst;
+	uint64_t u64i;
+	int i;
+	uint32_t j;
+	uint64_t len;
+	int ndims;
+	Dtype sum;
+	uint64_t stride;
+	int naxes;
+	uint32_t coordinate;
+	
+	
+	OffsetCalc_mean_var offs_calc(strides_dst, strides_src, ndims_dst, ndims_src, dims_src, axes);
+	naxes = ndims_src - ndims_dst;
+
+	len = 1;
+	for (i = 0; i < naxes; i++)
+	{
+		len *= dims_src[axes[i]];
+	}
+
+	int xx;
+
+	xx = offs_calc.GetSrcOffset(0, 0);
+	xx = offs_calc.GetSrcOffset(0, 1);
+	xx = offs_calc.GetSrcOffset(0, 2);
+
+
+	for (offset_dst = 0; offset_dst < numels; offset_dst++)
+	{
+		sum = static_cast<Dtype>(0);
+
+		for (u64i = 0; u64i < len; u64i++)
+		{
+			sum += src[offs_calc.GetSrcOffset(offset_dst, u64i)];
+		}
+
+		dst[offset_dst] = sum / static_cast<Dtype>(len);
+	}
+	
+
+	/*
+	OffsetCalc_mean_std_simple offs_calc(strides_dst, strides_src, ndims_dst, ndims_src, dims_src, axes);
+
+	naxes = ndims_src - ndims_dst;
+
+	len = 1;
+	for (i = 0; i < naxes; i++)
+	{
+		len *= dims_src[axes[i]];
+	}
+
+	for (offset_dst = 0; offset_dst < numels; offset_dst++)
+	{
+		offset_src = offs_calc.GetOffsets(offset_dst);
+
+		sum = static_cast<Dtype>(0);
+
+		for (u64i = 0; u64i < len; u64i++)
+		{
+			sum += src[offset_src + offs_calc.GetWorkspaceOffsets(u64i)];
+		}
+
+		dst[offset_dst] = sum / static_cast<Dtype>(len);
+	}
+	*/
+
+	/*
+	for (offset_dst = 0; offset_dst < numels; offset_dst++)
+	{
+		offset_src_save = offs_calc.GetOffsets(offset_dst);
+
+		sum = static_cast<Dtype>(0);
+
+		for (u64i = 0; u64i < len; u64i++)
+		{
+			offset_src = offset_src_save;
+
+			coordinate = u64i;
+			for (i = 0; i < naxes; i++)
+			{
+				coordinate = coordinate / non_axis_strides[i];
+
+				offset_src += (coordinate * important_strides[i]);
+
+				coordinate = u64i % non_axis_strides[i];
+			}
+
+			sum += src[offset_src];
+		}
+
+		dst[offset_dst] = sum / static_cast<Dtype>(len);
+	}
+	*/
+}
+
+// ND tensor mean
+template<typename Dtype>
 void cpu_mean(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride)
 {
 	uint64_t i;
@@ -1476,3 +1578,9 @@ void quantized_matmul(bool traspose_A, bool traspose_B, uint64_t M, uint64_t N, 
 	}
 
 }
+
+
+
+template void cpu_mean<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
+template void cpu_mean<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
+template void cpu_mean<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);

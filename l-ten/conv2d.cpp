@@ -999,7 +999,7 @@ namespace lten {
 
 		if (ndims_ == 3) // not sure why but ndims_ = 3 is very slow with *ALGO_1
 		{
-			bwf_algo_ = CUDNN_CONVOLUTION_BWD_FILTER_ALGO_0;
+			bwf_algo_ = CUDNN_CONVOLUTION_BWD_FILTER_ALGO_3;
 			bwd_algo_ = CUDNN_CONVOLUTION_BWD_DATA_ALGO_0;
 		}
 		else

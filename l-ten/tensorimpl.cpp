@@ -1552,10 +1552,10 @@ namespace lten {
 		int i;
 		TensorOps options;
 		uint64_t dims_dst[MAX_DIMS];
-		uint64_t dims_tmp[MAX_DIMS];
 		int ndims_src;
 		int ndims_dst;
-
+		uint64_t bitmask;
+		const uint64_t* dims_src;
 
 		ndims_src = operand1.get_ndims();
 
@@ -1571,21 +1571,20 @@ namespace lten {
 		options.device_type = operand1.get_device();
 		options.device_index = operand1.get_device_index();
 
-
-		memcpy(dims_tmp, operand1.get_sizes(), sizeof(uint64_t) * ndims_src);
-
+		bitmask = 0;
 		for (i = 0; i < naxes; i++)
 		{
-			dims_tmp[axes[i]] = 0; // set to an invalid value
+			bitmask |= (1 << axes[i]);
 		}
 
+		dims_src = operand1.get_sizes();
 		ndims_dst = 0;
+
 		for (i = 0; i < ndims_src; i++)
 		{
-			if (dims_tmp[i])
+			if (!(bitmask & (1 << i)))
 			{
-				dims_dst[ndims_dst] = dims_tmp[i];
-				ndims_dst++;
+				dims_dst[ndims_dst++] = dims_src[i];
 			}
 		}
 
@@ -1593,8 +1592,7 @@ namespace lten {
 
 		if (CPU == options.device_type)
 		{
-			//cpu_mean((Dtype*)get_data_ptr(), (Dtype*)operand1.get_data_ptr(), get_numels(), get_strides(), operand1.get_strides(), ndims_dst, ndims_src, operand1.get_sizes(), axes);
-			LTEN_ERR("Not yet implemented: mean for cpu"); // need to copy and clean up implementation from merge3
+			cpu_mean((Dtype*)get_data_ptr(), (Dtype*)operand1.get_data_ptr(), get_numels(), get_strides(), operand1.get_strides(), ndims_dst, ndims_src, dims_src, axes);
 		}
 		else
 		{
@@ -2011,9 +2009,8 @@ namespace lten {
 
 	}
 
-
 	template<typename Dtype>
-	void TensorImpl<Dtype>::reshape(TensorImpl<Dtype>& operand1, const std::initializer_list<uint64_t>& dims)
+	void TensorImpl<Dtype>::reshape(TensorImpl<Dtype>& operand1, const uint64_t* dims, int ndims)
 	{
 		TensorOps options;
 
@@ -2021,14 +2018,16 @@ namespace lten {
 		options.device_type = operand1.get_device();
 		options.device_index = operand1.get_device_index();
 
-		allocate_from_buffer(dims, operand1.get_data_ptr(), false, &options);
+		allocate_from_buffer(dims, ndims, operand1.get_data_ptr(), false, &options);
 
-		add_child(operand1); // add child unconditionally and prevent its destruction since its buffer is shared with this instance
 
+		operand1.add_ref();
+		view_src_ = &operand1;
 
 		if (operand1.autograd_on())
 		{
-			grad_fn_ = ::reshape_backward;
+			add_child(operand1);
+			grad_fn_ = nullptr; // so layer is 'skipped' during backprop for speed
 			set_autograd(true);
 		}
 
@@ -2230,7 +2229,7 @@ namespace lten {
 	template void TensorImpl<float>::clear_gradients();
 	template void TensorImpl<float>::squeeze(TensorImpl<float>& operand1, int dim);
 	template void TensorImpl<float>::unsqueeze(TensorImpl<float>& operand1, int dim);
-	template void TensorImpl<float>::reshape(TensorImpl<float>& operand1, const std::initializer_list<uint64_t>& dims);
+	template void TensorImpl<float>::reshape(TensorImpl<float>& operand1, const uint64_t* dims, int ndims);
 	template void TensorImpl<float>::to(TensorImpl<float>& operand1, device target_device, int target_device_index);
 	template void TensorImpl<float>::transpose(TensorImpl<float>& operand1, int dim1, int dim2);
 	template void TensorImpl<float>::masked_fill(TensorImpl<float>& operand1, TensorImpl<float>& mask, double value);
@@ -2265,7 +2264,7 @@ namespace lten {
 	template void TensorImpl<int>::clear_gradients();
 	template void TensorImpl<int>::squeeze(TensorImpl<int>& operand1, int dim);
 	template void TensorImpl<int>::unsqueeze(TensorImpl<int>& operand1, int dim);
-	template void TensorImpl<int>::reshape(TensorImpl<int>& operand1, const std::initializer_list<uint64_t>& dims);
+	template void TensorImpl<int>::reshape(TensorImpl<int>& operand1, const uint64_t* dims, int ndims);
 	template void TensorImpl<int>::to(TensorImpl<int>& operand1, device target_device, int target_device_index);
 	template void TensorImpl<int>::transpose(TensorImpl<int>& operand1, int dim1, int dim2);
 	template void TensorImpl<int>::masked_fill(TensorImpl<int>& operand1, TensorImpl<int>& mask, double value);
@@ -2300,7 +2299,7 @@ namespace lten {
 	template void TensorImpl<uint8_t>::clear_gradients();
 	template void TensorImpl<uint8_t>::squeeze(TensorImpl<uint8_t>& operand1, int dim);
 	template void TensorImpl<uint8_t>::unsqueeze(TensorImpl<uint8_t>& operand1, int dim);
-	template void TensorImpl<uint8_t>::reshape(TensorImpl<uint8_t>& operand1, const std::initializer_list<uint64_t>& dims);
+	template void TensorImpl<uint8_t>::reshape(TensorImpl<uint8_t>& operand1, const uint64_t* dims, int ndims);
 	template void TensorImpl<uint8_t>::to(TensorImpl<uint8_t>& operand1, device target_device, int target_device_index);
 	template void TensorImpl<uint8_t>::transpose(TensorImpl<uint8_t>& operand1, int dim1, int dim2);
 	template void TensorImpl<uint8_t>::masked_fill(TensorImpl<uint8_t>& operand1, TensorImpl<uint8_t>& mask, double value);
