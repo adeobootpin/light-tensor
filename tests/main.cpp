@@ -3,7 +3,7 @@
 
 int main(int argc, char* argv[])
 {
-	mean_test2(); return 0;
+	var_test(); return 0;
 	//transpose_test();
 	//transpose_backwards_test();
 

@@ -77,7 +77,7 @@ void mean_test2()
 	lten::Tensor a;
 	lten::Tensor b;
 
-	a = lten::RandomTensor({ 8, 448, 768+1 });
+	a = lten::RandomTensor({ 8, 448, 768 });
 
 	uint64_t len = a.get_numels();
 	float* data = (float*)a.get_data_ptr();
@@ -91,8 +91,7 @@ void mean_test2()
 
 	uint32_t axes[] = { 1 };
 
-	//for (i = 0; i < 10; i++)
-	for (i = 0; i < 1; i++)
+	for (i = 0; i < 1000; i++)
 	{
 		if (i == 10)
 		{
@@ -108,6 +107,44 @@ void mean_test2()
 	time_span = clock_end - clock_begin;
 	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
 	printf("lten MeanTest [duration: %f sec]\n", nseconds);
+}
+
+
+void var_test()
+{
+	int i;
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+
+	lten::Tensor a;
+	lten::Tensor b;
+
+	//a = lten::RandomTensor({ 16, 256, 8, 768 });
+	a = lten::RandomTensor({ 1, 1, 1, 13 });
+	a = a.to(lten::GPU);
+
+	uint32_t axes[] = { 3 };
+
+	//for (i = 0; i < 100000; i++)
+	for (i = 0; i < 1; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+
+		b = a.var(axes, 1);
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten var test [duration: %f sec]\n", nseconds);
 }
 
 
