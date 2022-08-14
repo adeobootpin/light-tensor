@@ -198,6 +198,68 @@ namespace lten {
 
 		}
 
+		Tensor index(const Tensor& index)
+		{
+			const uint64_t* dims_ptr;
+			dtype data_type;
+			dims_ptr = smart_ptr_->get_sizes();
+
+			/*
+			if (index >= dims_ptr[0])
+			{
+				LTEN_ERR("Index out of range");
+			}
+			*/
+
+			data_type = smart_ptr_->get_data_type();
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				resultImpl->index(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<int>*>(index.smart_ptr_.get_real_object()));
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					//resultImpl->sub_array(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), index);
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						//resultImpl->sub_array(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), index);
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
+
 		Tensor operator+(const Tensor& other)
 		{
 			dtype data_type = smart_ptr_->get_data_type();

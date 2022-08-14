@@ -36,4 +36,7 @@ void gpu_repeat(Dtype* dst, const Dtype* src, const uint64_t numels, const uint6
 template<typename Dtype>
 void gpu_repeat_interleave(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_array, const uint32_t* cummulative_times, int ndims, int ndims_times, int dim);
 
+template<typename Dtype>
+void gpu_index(Dtype* dst, const Dtype* src, const int* indices, uint64_t copy_len, const uint64_t numels);
+
 #endif // TENSOR_FNS_H

@@ -38,6 +38,10 @@ void var_test();
 void layerNorm_test();
 void maxPool3d_test();
 void transpose_test();
+void repeat_test();
+void repeat_interleave_test();
+void index_test();
+
 void transpose_backwards_test();
 
 #endif // TESTS_H

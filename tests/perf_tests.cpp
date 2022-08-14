@@ -247,6 +247,149 @@ void maxPool3d_test()
 
 }
 
+void repeat_test()
+{
+	int i;
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+
+	lten::Tensor a;
+	lten::Tensor b;
+
+	uint32_t repeats[MAX_DIMS] = { 1, 8, 1 };
+
+	a = lten::RandomTensor({ 8, 3136, 96 });
+	a = a.to(lten::GPU);
+
+	for (i = 0; i < 1000; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+
+		b = a.repeat(repeats, 5);
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten repeat [duration: %f sec]\n", nseconds);
+}
+
+void repeat_interleave_test()
+{
+	int i;
+
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+	uint32_t repeats[MAX_DIMS] = { 3136, 3136, 3136, 3136, 3136, 3136, 3136, 3136 };
+	int nrepeats = 8;
+	uint32_t* scratch;
+	scratch = new uint32_t[nrepeats + 1];
+
+	lten::Tensor x;
+	lten::Tensor y;
+
+	x = lten::RandomTensor({ 1, 8, 96 });
+	x = x.to(lten::GPU);
+
+
+	for (i = 0; i < 100000; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+		y = x.repeat_interleave(repeats, nrepeats, 1, scratch);
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten repeat interleave [duration: %f sec]\n", nseconds);
+
+}
+
+void index_test()
+{
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+	int* indices;
+	float* data;
+	int i;
+	int j;
+
+	lten::Tensor x;
+	lten::Tensor y;
+	lten::Tensor indexx;
+	lten::TensorOps op;
+
+	srand(0);
+
+	data = new float[111 * 96];
+	for (i = 0; i < 111 * 96; i++)
+	{
+		data[i] = (rand() % 1000) * 0.00001f;
+	}
+
+	indices = new int[56 * 14];
+
+	for (i = 0; i < 56; i++)
+	{
+		for (j = 0; j < 14; j++)
+		{
+			indices[i * 14 + j] = 52 + i - j * 4;
+		}
+	}
+
+	//x = torch::from_blob(data, { 111, 96 }, torch::requires_grad());
+	//indexx = torch::from_blob(indices, { 56, 14 }, torch::kInt32);
+	//indexx = indexx.to(torch::kLong);
+
+	//x = x.to(device);
+	//indexx = indexx.to(device);
+
+	x = lten::RandomTensor({ 111, 96 });
+	x = x.to(lten::GPU);
+
+	op.data_type = lten::INT32;
+	indexx = lten::TensorFromBuffer({ 56, 14 }, indices, false, &op);
+	indexx = indexx.to(lten::GPU);
+
+	//for (i = 0; i < 250000; i++)
+	for (i = 0; i < 1; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+
+		y = x.index({ indexx });
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten::index [duration: %f sec]\n", nseconds);
+
+}
+
 int ReadDataFromFile(const char* file_name, void** pp_data, size_t* data_size);
 int conv3d_perf_test()
 {

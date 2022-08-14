@@ -3,7 +3,8 @@
 
 int main(int argc, char* argv[])
 {
-	var_test(); return 0;
+	index_test(); return 0;
+	//repeat_interleave_test(); return 0;
 	//transpose_test();
 	//transpose_backwards_test();
 

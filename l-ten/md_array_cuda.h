@@ -621,6 +621,51 @@ public:
 
 	}
 
+	CUDA_MultiDimArray index(const CUDA_MultiDimArray<int>& other)
+	{
+		CUDA_MultiDimArray result;
+		uint64_t dims_result[MAX_DIMS];
+		const uint64_t* other_dims;
+		int ndims;
+		int other_ndims;
+		int i;
+		uint64_t u64i;
+		Dtype* dst;
+		Dtype* src;
+		int* indices;
+		uint64_t copy_len;
+		uint64_t numels;
+
+
+		copy_len = 1;
+		for (i = 1; i < ndims_; i++)
+		{
+			copy_len *= dims_array_[i];
+		}
+
+		other_dims = other.GetSizes();
+		other_ndims = other.GetNDims();
+		ndims = other.GetNDims() + ndims_ - 1;
+
+		memcpy(dims_result, other_dims, sizeof(uint64_t) * other_ndims);
+
+		for (i = other_ndims; i < ndims; i++)
+		{
+			dims_result[i] = dims_array_[i - other_ndims + 1]; // add dims after 1st one to result dims array
+		}
+
+		result.Allocate(dims_result, ndims, nullptr, false);
+
+		dst = result.GetDataPtr();
+		src = data_ptr_;
+		indices = other.GetDataPtr();
+		numels = result.GetNumels();
+
+		gpu_index(dst, src, indices, copy_len, numels);
+
+		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
+	}
+
 	CUDA_MultiDimArray repeat(const uint32_t* repeats, int nrepeats)
 	{
 		CUDA_MultiDimArray result;

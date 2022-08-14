@@ -2080,53 +2080,70 @@ namespace lten {
 
 	}
 
-
 	template<typename Dtype>
-	void TensorImpl<Dtype>::add_child(TensorImpl<Dtype>& child)
+	void TensorImpl<Dtype>::index(TensorImpl<Dtype>& operand1, TensorImpl<int>& index_operand)
 	{
-		intrusive_ptr<TensorImpl>* temp_ptr;
+		const uint64_t* result_sizes_ptr;
+		TensorOps options;
+		int ndims;
+		MultiDimArray<Dtype>* op1_md_array;
 
-		if (num_children_ >= MAX_CHILDREN)
+		if (index_operand.get_data_type() != INT32)
 		{
-			LTEN_ERR("More child nodes added to computational graph than maximum allowed");
+			LTEN_ERR("Index tensors must be of type INT32");
 		}
 
-		temp_ptr = new intrusive_ptr<TensorImpl>(&child);
+		options.data_type = operand1.get_data_type();
+		options.device_type = operand1.get_device();
+		options.device_index = operand1.get_device_index();
 
-		children_lock_[num_children_] = temp_ptr;
+		op1_md_array = operand1.get_mdarray();
 
-		children_[num_children_++] = &child;
-	}
-
-	template<typename Dtype>
-	void TensorImpl<Dtype>::clear_gradients()
-	{
-		device device_type;
-
-		device_type = get_device();
-
-		if (gradient_ptr_)
+		if (CPU == options.device_type)
 		{
-			if (CPU == device_type)
+			MultiDimArray<Dtype> result;
+
+			result = (*op1_md_array).index(*(index_operand.get_mdarray()));
+
+			result_sizes_ptr = result.GetSizes();
+			ndims = result.GetNDims();
+
+			LTEN_ERR_CHECK(allocate_from_buffer(result_sizes_ptr, ndims, result.GetDataPtr(), true, &options));
+			result.SetMemoryOwnership(false); // this TensorImpl needs to keep the md_array's buffer so set ownership accordingly
+		}
+		else
+		{
+			if (GPU == options.device_type)
 			{
-				::FillBuffer<Dtype>(gradient_ptr_->GetDataPtr(), gradient_ptr_->GetNumels(), 0);
+#ifdef USE_CUDA
+				CUDA_MultiDimArray<Dtype> result;
+
+				result = (*(static_cast<CUDA_MultiDimArray<Dtype>*>(op1_md_array))).index((*(static_cast<CUDA_MultiDimArray<int>*>(index_operand.get_mdarray()))));
+
+				result_sizes_ptr = result.GetSizes();
+				ndims = result.GetNDims();
+
+				LTEN_ERR_CHECK(allocate_from_buffer(result_sizes_ptr, ndims, result.GetDataPtr(), true, &options));
+				result.SetMemoryOwnership(false); // this TensorImpl needs to keep the md_array's buffer so set ownership accordingly
+#else
+				LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
 			}
 			else
 			{
-				if (GPU == device_type)
-				{
-#ifdef USE_CUDA
-					ZeroMemoryOnGPU(gradient_ptr_->GetDataPtr(), sizeof(Dtype) * gradient_ptr_->GetNumels());
-#else
-					LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
-#endif
-				}
-				else
-				{
-					LTEN_ERR("Invalid tensor device type");
-				}
+				LTEN_ERR("Invalid tensor device type");
 			}
 		}
+
+		if (operand1.autograd_on())
+		{
+			add_child(operand1);
+			index_operand.add_ref();
+			//index_ = &index_operand;
+			//grad_fn_ = ::index_backward;
+			set_autograd(true);
+		}
+
 	}
 
 	template<typename Dtype>
@@ -2313,6 +2330,54 @@ namespace lten {
 
 	}
 
+	template<typename Dtype>
+	void TensorImpl<Dtype>::add_child(TensorImpl<Dtype>& child)
+	{
+		intrusive_ptr<TensorImpl>* temp_ptr;
+
+		if (num_children_ >= MAX_CHILDREN)
+		{
+			LTEN_ERR("More child nodes added to computational graph than maximum allowed");
+		}
+
+		temp_ptr = new intrusive_ptr<TensorImpl>(&child);
+
+		children_lock_[num_children_] = temp_ptr;
+
+		children_[num_children_++] = &child;
+	}
+
+	template<typename Dtype>
+	void TensorImpl<Dtype>::clear_gradients()
+	{
+		device device_type;
+
+		device_type = get_device();
+
+		if (gradient_ptr_)
+		{
+			if (CPU == device_type)
+			{
+				::FillBuffer<Dtype>(gradient_ptr_->GetDataPtr(), gradient_ptr_->GetNumels(), 0);
+			}
+			else
+			{
+				if (GPU == device_type)
+				{
+#ifdef USE_CUDA
+					ZeroMemoryOnGPU(gradient_ptr_->GetDataPtr(), sizeof(Dtype) * gradient_ptr_->GetNumels());
+#else
+					LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+				}
+				else
+				{
+					LTEN_ERR("Invalid tensor device type");
+				}
+			}
+		}
+	}
+
 	template int TensorImpl<float>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_memory, TensorOps* options_ptr);
 	template int TensorImpl<float>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_data_memory, void* gradient_ptr, bool own_gradient_memory, TensorOps* options_ptr);
 	template int TensorImpl<float>::allocate(const std::initializer_list<uint64_t>& dims, TensorOps* options_ptr);
@@ -2347,6 +2412,7 @@ namespace lten {
 	template void TensorImpl<float>::to(TensorImpl<float>& operand1, device target_device, int target_device_index);
 	template void TensorImpl<float>::transpose(TensorImpl<float>& operand1, int dim1, int dim2);
 	template void TensorImpl<float>::masked_fill(TensorImpl<float>& operand1, TensorImpl<float>& mask, double value);
+	template void TensorImpl<float>::index(TensorImpl<float>& operand1, TensorImpl<int>& index_operand);
 	template void TensorImpl<float>::repeat(TensorImpl<float>& operand1, const uint32_t* repeats, int nrepeats);
 	template void TensorImpl<float>::repeat_interleave(TensorImpl<float>& operand1, const uint32_t* dims_times, int ndims, int dim, uint32_t* scratch);
 
@@ -2384,6 +2450,7 @@ namespace lten {
 	template void TensorImpl<int>::to(TensorImpl<int>& operand1, device target_device, int target_device_index);
 	template void TensorImpl<int>::transpose(TensorImpl<int>& operand1, int dim1, int dim2);
 	template void TensorImpl<int>::masked_fill(TensorImpl<int>& operand1, TensorImpl<int>& mask, double value);
+	template void TensorImpl<int>::index(TensorImpl<int>& operand1, TensorImpl<int>& index_operand);
 	template void TensorImpl<int>::repeat(TensorImpl<int>& operand1, const uint32_t* repeats, int nrepeats);
 	template void TensorImpl<int>::repeat_interleave(TensorImpl<int>& operand1, const uint32_t* dims_times, int ndims, int dim, uint32_t* scratch);
 
@@ -2421,6 +2488,7 @@ namespace lten {
 	template void TensorImpl<uint8_t>::to(TensorImpl<uint8_t>& operand1, device target_device, int target_device_index);
 	template void TensorImpl<uint8_t>::transpose(TensorImpl<uint8_t>& operand1, int dim1, int dim2);
 	template void TensorImpl<uint8_t>::masked_fill(TensorImpl<uint8_t>& operand1, TensorImpl<uint8_t>& mask, double value);
+	template void TensorImpl<uint8_t>::index(TensorImpl<uint8_t>& operand1, TensorImpl<int>& index_operand);
 	template void TensorImpl<uint8_t>::repeat(TensorImpl<uint8_t>& operand1, const uint32_t* repeats, int nrepeats);
 	template void TensorImpl<uint8_t>::repeat_interleave(TensorImpl<uint8_t>& operand1, const uint32_t* dims_times, int ndims, int dim, uint32_t* scratch);
 } // namespace

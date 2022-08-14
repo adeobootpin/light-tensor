@@ -1330,3 +1330,85 @@ int fc_test(bool run_on_gpu)
 	return 0;
 }
 
+//---------------------
+// Tensor indexing test
+//---------------------
+int indexing_test(bool run_on_gpu)
+{
+	lten::Tensor a;
+	lten::Tensor b;
+	lten::Tensor index;
+	lten::TensorOps op;
+	int ret;
+
+	float a_vals[] = { 2.0f, 3.0f, 4.0f, 2.0f, 6.0f, 8.0f, 5.0f, 7.0f, 5.0f, 2.0f, 1.0f, 9.0f, 0.0f, 3.0f, 6.0f, 4.0f, 8.0f, 2.0f, 3.0f, 2.0f, 2.0f, 4.0f, 5.0f, 6.0f };
+	int index_vals[] = { 2, 3, 2 };
+
+	float b_gt[] = { 5.0f, 2.0f, 1.0f, 9.0f, 0.0f, 3.0f, 6.0f, 4.0f,	5.0f, 2.0f, 1.0f, 9.0f };
+	float grad_gt[] = { 0.0f, 0.0f, 0.0f, 0.0f,	0.0f, 0.0f, 0.0f, 0.0f,	1.0f, 1.48f, 1.6f, 1.1f, 0.69f, 0.33f, 0.14f, 0.8f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+
+
+	a = lten::TensorFromBuffer({ 6, 4 }, a_vals, false);
+	a.set_autograd(true);
+	a.clear_gradients();
+
+	op.data_type = lten::INT32;
+	index = lten::TensorFromBuffer({ 1, 3 }, index_vals, false, &op);
+
+	std::cout << a << "\n";
+	std::cout << index << "\n";
+
+	if (run_on_gpu)
+	{
+		a = a.to(lten::GPU);
+		index = index.to(lten::GPU);
+	}
+
+	b = a.index(index);
+
+	lten::Tensor top_gradient;
+	float top_grad[] = { 0.1f, 0.45f, 1.5f, 0.9f, 0.69f, 0.33f, 0.14f, 0.8f, 0.9f, 1.03f, 0.1f, 0.2f };
+	top_gradient = lten::TensorFromBuffer(b.get_sizes(), b.get_ndims(), top_grad, false);
+
+	if (run_on_gpu)
+	{
+		top_gradient = top_gradient.to(lten::GPU);
+	}
+
+	b.clear_gradients();
+	b.backward(top_gradient.get_mdarray<float>());
+
+
+	if (run_on_gpu)
+	{
+		a = a.to(lten::CPU);
+		b = b.to(lten::CPU);
+	}
+
+
+	ret = Compare((float*)b.get_data_ptr(), b_gt, b.get_numels(), 0.0f);
+	if (ret)
+	{
+		assert(0);
+		goto Exit;
+	}
+
+
+
+	ret = Compare((float*)a.get_grad_ptr(), grad_gt, b.get_numels(), 0.0001f);
+	if (ret)
+	{
+		assert(0);
+		goto Exit;
+	}
+
+	//std::cout << b << "\n";
+	//std::cout << a.get_gradients_mdarray<float>() << "\n";
+
+	ret = 0;
+
+Exit:
+
+	return ret;
+
+}

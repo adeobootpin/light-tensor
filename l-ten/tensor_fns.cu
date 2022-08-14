@@ -860,7 +860,7 @@ void gpu_layer_norm(Dtype* dst, const Dtype* src, const uint64_t numels, const u
 //-----------------------------------------------------------------------------------------------------
 const int defa_threads = 64;
 constexpr int num_threads = 64;
-constexpr int thread_work_size = 4;
+constexpr int thread_work_size = vec_size;
 constexpr int block_work_size = 256;
 
 
@@ -926,40 +926,48 @@ void gpu_transpose(const Dtype* A, Dtype* At, const uint64_t numels, const uint6
 // repeat functions
 //
 //-----------------------------------------------------------------------------------------------------
-__global__ void gpu_repeat_kernel(float* dst, float* src, int N, OffsetCalc_repeat offs_calc)
+__global__ void gpu_repeat_vectorized_kernel(float* dst, float* src, int N, OffsetCalc_repeat offs_calc)
 {
-	float4 dodo;
+	float4 data;
 	unsigned int dst_offset;
 	unsigned int src_offset;
-
-	float* data = (float*)&dodo;
+	int i;
 
 	dst_offset = (blockIdx.x * blockDim.x + threadIdx.x) * thread_work_size;
 
-	if (dst_offset >= N)
-		return;
-#pragma unroll
-	for (int i = 0; i < thread_work_size; i++)
-	{
-		if (dst_offset < N)
-		{
-			src_offset = offs_calc.GetOffsets(dst_offset);
-			//dst[dst_offset] = src[src_offset];
-			data[i] = src[src_offset];
-		}
-		dst_offset++;
-	}
 
-	//*(reinterpret_cast<float4*>(&dst[dst_offset-4])) = *(reinterpret_cast<float4*>(data));
-	*(reinterpret_cast<float4*>(&dst[dst_offset - 4])) = dodo;
+	if (dst_offset + vec_size <= N)
+	{
+#pragma unroll
+		for (i = 0; i < vec_size; i++)
+		{
+			src_offset = offs_calc.GetOffsets(dst_offset + i);
+			((float*)&data)[i] = src[src_offset];
+		}
+		*(reinterpret_cast<float4*>(&dst[dst_offset])) = data;
+	}
+	else
+	{
+#pragma unroll		
+		for (i = 0; i < vec_size - 1; i++)
+		{
+			if (dst_offset < N)
+			{
+				src_offset = offs_calc.GetOffsets(dst_offset);
+				dst[dst_offset] = src[src_offset];
+			}
+			dst_offset++;
+		}
+	}
 }
+
 
 template<typename Dtype>
 void gpu_repeat(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint64_t* dims_src, const int ndims)
 {
-	/*
 	uint64_t N;
 	int num_blocks;
+	uint32_t factor;
 
 	OffsetCalc_repeat offs_calc(strides_dst, strides_src, dims_src, ndims);
 
@@ -967,23 +975,11 @@ void gpu_repeat(Dtype* dst, const Dtype* src, const uint64_t numels, const uint6
 
 	assert(N < UINT_MAX); // offsets are 32 bit
 
-	num_blocks = (static_cast<int>(N) + defa_threads - 1) / defa_threads;
+	factor = defa_threads * vec_size;
 
-	gpu_repeat_kernel << < num_blocks, defa_threads >> > ((float*)dst, (float*)src, N, offs_calc);
-	*/
+	num_blocks = (static_cast<int>(N) + factor - 1) / factor; // allocate (1/vec_size) threads since vectorization kernel to be used
 
-	uint64_t N;
-	int num_blocks;
-
-	OffsetCalc_repeat offs_calc(strides_dst, strides_src, dims_src, ndims);
-
-	N = numels;
-
-	assert(N < UINT_MAX); // offsets are 32 bit
-
-	num_blocks = (static_cast<int>(N) + 256 - 1) / 256;
-
-	gpu_repeat_kernel << < num_blocks, defa_threads >> > ((float*)dst, (float*)src, N, offs_calc);
+	gpu_repeat_vectorized_kernel << < num_blocks, defa_threads >> > ((float*)dst, (float*)src, N, offs_calc);
 
 }
 //-----------------------------------------------------------------------------------------------------
@@ -994,6 +990,21 @@ void gpu_repeat(Dtype* dst, const Dtype* src, const uint64_t numels, const uint6
 // repeat interleave functions
 //
 //-----------------------------------------------------------------------------------------------------
+__global__ void gpu_repeat_interleave_kernel(float* dst, float* src, int N, OffsetCalc_repeat_interleave offs_calc)
+{
+	unsigned int dst_offset;
+	unsigned int src_offset;
+
+	dst_offset = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (dst_offset < N)
+	{
+		src_offset = offs_calc.GetOffsets(dst_offset);
+
+		dst[dst_offset] = src[src_offset];
+	}
+}
+
 template<typename Dtype>
 void gpu_repeat_interleave(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_array, const uint32_t* cummulative_times, int ndims, int ndims_times, int dim)
 {
@@ -1008,10 +1019,48 @@ void gpu_repeat_interleave(Dtype* dst, const Dtype* src, const uint64_t numels, 
 
 	num_blocks = (static_cast<int>(N) + defa_threads - 1) / defa_threads;
 
-	//gpu_repeat_interleave_kernel << < num_blocks, defa_threads >> > ((float*)dst, (float*)src, N, offs_calc);
+	gpu_repeat_interleave_kernel << < num_blocks, defa_threads >> > ((float*)dst, (float*)src, N, offs_calc);
 
 }
 //-----------------------------------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------------------------------
+//
+// index functions
+//
+//-----------------------------------------------------------------------------------------------------
+template<typename Dtype>
+__global__ void gpu_index_kernel(Dtype* dst, const Dtype* src, const int* indices, uint64_t copy_len, const uint64_t N)
+{
+	unsigned int offset;
+	unsigned int index;
+
+	offset = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (offset < N)
+	{
+		index = indices[offset / copy_len];
+
+		dst[offset] = src[index * copy_len + offset % copy_len];
+	}
+}
+
+template<typename Dtype>
+void gpu_index(Dtype* dst, const Dtype* src, const int* indices, uint64_t copy_len, const uint64_t numels)
+{
+	uint64_t N;
+	int num_blocks;
+
+	N = numels;
+
+	assert(N < UINT_MAX); // offsets are 32 bit
+
+	num_blocks = (static_cast<int>(N) + defa_threads - 1) / defa_threads;
+
+	gpu_index_kernel << < num_blocks, defa_threads >> > (dst, src, indices, copy_len, N);
+}
+//-----------------------------------------------------------------------------------------------------
+
 
 template void gpu_mean<float>(float* dst, const float* src, const uint64_t numels);
 template void gpu_mean<int>(int* dst, const int* src, const uint64_t numels);
@@ -1045,3 +1094,6 @@ template void gpu_repeat_interleave<float>(float* dst, const float* src, const u
 template void gpu_repeat_interleave<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_array, const uint32_t* cummulative_times, int ndims, int ndims_times, int dim);
 template void gpu_repeat_interleave<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_array, const uint32_t* cummulative_times, int ndims, int ndims_times, int dim);
 
+template void gpu_index<float>(float* dst, const float* src, const int* indices, uint64_t copy_len, const uint64_t numels);
+template void gpu_index<int>(int* dst, const int* src, const int* indices, uint64_t copy_len, const uint64_t numels);
+template void gpu_index<uint8_t>(uint8_t* dst, const uint8_t* src, const int* indices, uint64_t copy_len, const uint64_t numels);

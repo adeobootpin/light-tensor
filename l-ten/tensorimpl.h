@@ -198,6 +198,7 @@ namespace lten {
 		void unsqueeze(TensorImpl& operand1, int dim);
 		void transpose(TensorImpl& operand1, int dim1, int dim2);
 		void masked_fill(TensorImpl& operand1, TensorImpl& mask, double value);
+		void index(TensorImpl& operand1, TensorImpl<int>& index_operand);
 		void repeat(TensorImpl& operand1, const uint32_t* repeats, int nrepeats);
 		void repeat_interleave(TensorImpl& operand1, const uint32_t* repeats, int nrepeats, int dim, uint32_t* scratch);
 
