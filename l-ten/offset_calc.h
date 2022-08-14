@@ -675,5 +675,180 @@ struct OffsetCalc_mean_std_simple
 };
 
 
+struct OffsetCalc_repeat
+{
+	OffsetCalc_repeat(const uint64_t* strides_dst, const uint64_t* strides_src, const uint64_t* dims_src, int ndims)
+	{
+		uint32_t divisor;
+		uint32_t shift;
+		int i;
+
+		for (i = 0; i < ndims; i++)
+		{
+			divisor = (uint32_t)strides_dst[i];
+
+			for (shift = 0; shift < 32; shift++)
+			{
+				if ((1U << shift) >= divisor)
+				{
+					break;
+				}
+			}
+
+			uint64_t one = 1;
+			uint64_t magic = ((one << 32) * ((one << shift) - divisor)) / divisor + 1;
+
+			div_dst_[i].magic = (uint32_t)magic;
+			div_dst_[i].shift = shift;
+			div_dst_[i].divisor = divisor;
+
+
+			strides_src_[i] = static_cast<uint32_t>(strides_src[i]);
+		}
+
+		for (i = 0; i < ndims; i++)
+		{
+			divisor = (uint32_t)dims_src[i];
+
+			for (shift = 0; shift < 32; shift++)
+			{
+				if ((1U << shift) >= divisor)
+				{
+					break;
+				}
+			}
+
+			uint64_t one = 1;
+			uint64_t magic = ((one << 32) * ((one << shift) - divisor)) / divisor + 1;
+
+			div_dims_[i].magic = (uint32_t)magic;
+			div_dims_[i].shift = shift;
+			div_dims_[i].divisor = divisor;
+		}
+
+
+		ndims_ = ndims;
+	}
+
+	LTEN_HOST_DEVICE uint32_t GetOffsets(uint32_t index)
+	{
+		uint32_t src_offset;
+
+		int i;
+		uint32_t coordinate;
+		uint32_t mod;
+
+		src_offset = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < ndims_; ++i)
+		{
+			coordinate = ((((uint64_t)index * div_dst_[i].magic) >> 32) + index) >> div_dst_[i].shift;
+			index = index - coordinate * div_dst_[i].divisor;
+
+
+			mod = ((((uint64_t)coordinate * div_dims_[i].magic) >> 32) + coordinate) >> div_dims_[i].shift;
+			mod = coordinate - mod * div_dims_[i].divisor;
+			src_offset += mod * strides_src_[i]; //src_offset += (coordinate % dims_src[j]) * strides_src[j]; // convert from dst coordinate to src coordinate, then compute src offset
+
+		}
+
+		return src_offset;
+	}
+
+
+	Divider div_dst_[MAX_DIMS];
+	Divider div_dims_[MAX_DIMS];
+	uint32_t strides_src_[MAX_DIMS];
+	int ndims_;
+};
+
+
+struct OffsetCalc_repeat_interleave
+{
+	OffsetCalc_repeat_interleave(const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* cummulative_times, int ndims, int nrepeats, int dim)
+	{
+		uint32_t divisor;
+		uint32_t shift;
+		int i;
+
+		for (i = 0; i < ndims; i++)
+		{
+			divisor = (uint32_t)strides_dst[i];
+
+			for (shift = 0; shift < 32; shift++)
+			{
+				if ((1U << shift) >= divisor)
+				{
+					break;
+				}
+			}
+
+			uint64_t one = 1;
+			uint64_t magic = ((one << 32) * ((one << shift) - divisor)) / divisor + 1;
+
+			div_dst_[i].magic = (uint32_t)magic;
+			div_dst_[i].shift = shift;
+			div_dst_[i].divisor = divisor;
+
+			strides_array_[i] = static_cast<uint32_t>(strides_src[i]);
+		}
+
+		memcpy(cummulative_times_, cummulative_times, sizeof(uint32_t) * (nrepeats + 1));
+
+		ndims_ = ndims;
+		nrepeats_ = nrepeats;
+		dim_ = dim;
+	}
+
+	LTEN_HOST_DEVICE uint32_t GetOffsets(uint32_t index)
+	{
+		uint32_t src_offset;
+
+		int i;
+		int j;
+		uint32_t coordinate;
+
+		src_offset = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < ndims_; ++i)
+		{
+			coordinate = ((((uint64_t)index * div_dst_[i].magic) >> 32) + index) >> div_dst_[i].shift;
+			index = index - coordinate * div_dst_[i].divisor;
+			if (i == dim_)
+			{
+				for (j = 0; j < nrepeats_; j++)
+				{
+					if (coordinate < cummulative_times_[j + 1]) // find correct window for coordinate
+					{
+						break;
+					}
+				}
+				src_offset += j * strides_array_[i]; // coordinate is j
+			}
+			else
+			{
+				src_offset += coordinate * strides_array_[i];
+			}
+		}
+
+		return src_offset;
+	}
+
+
+	Divider div_dst_[MAX_DIMS];
+	uint32_t strides_array_[MAX_DIMS];
+	uint32_t cummulative_times_[MAX_DIMS];
+	int ndims_;
+	int nrepeats_;
+	int dim_;
+};
+
+
 
 #endif // OFFSET_CALC_H

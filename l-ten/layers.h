@@ -850,6 +850,8 @@ namespace lten {
 		float epsilon_ = 1e-5f;
 		uint64_t max_ones_vector_size_ = 0;
 		bool affine_;
+		int naxes_;
+		uint32_t axes_[MAX_DIMS];
 	};
 
 #ifdef USE_CUDA

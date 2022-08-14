@@ -1205,6 +1205,275 @@ public:
 		return MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
 	}
 
+	MultiDimArray repeat(const uint32_t* repeats, int nrepeats)
+	{
+		MultiDimArray result;
+		uint64_t dims_result[MAX_DIMS];
+		uint64_t strides_buffer[MAX_DIMS];
+		uint64_t dims_buffer[MAX_DIMS];
+		const uint64_t* strides_dst;
+		uint64_t* dims_src; // need 'unsqueezed' src dims if ndims > ndims_ 
+		uint64_t* strides_src;
+		uint64_t u64i;
+		uint64_t numels;
+		Dtype* dst;
+		Dtype* src;
+		int i;
+		int j;
+		uint64_t coordinate;
+		uint64_t src_offset;
+		uint64_t dst_offset;
+		int ndims;
+
+		ndims = nrepeats;
+
+		if (ndims < ndims_)
+		{
+			LTEN_ERR("Number of repeat dimensions can not be less than number of tensor dimensions");
+		}
+
+		if (ndims > ndims_) // unsqueeze dims_array_
+		{
+			int len_diff = ndims - ndims_;
+			dims_src = dims_buffer;
+			for (i = 0; i < len_diff; i++)
+			{
+				dims_src[i] = 1;
+			}
+
+			memcpy(&dims_src[len_diff], dims_array_, sizeof(uint64_t) * ndims_);
+		}
+		else
+		{
+			dims_src = dims_array_;
+		}
+
+		for (i = 0; i < ndims; i++) // generate result dimesions
+		{
+			if (repeats[i] < 0)
+			{
+				LTEN_ERR("Repeat values must be greater than or equal to zero");
+			}
+
+			dims_result[i] = dims_src[i] * repeats[i];
+		}
+
+
+		ndims = std::max(ndims_, ndims);
+
+
+		if (ndims != ndims_)
+		{
+			strides_src = strides_buffer; // generate src strides in case 'unsqeezing' was required
+			numels = 1;
+			for (i = ndims - 1; i >= 0; i--)
+			{
+				strides_src[i] = numels;
+				numels *= dims_src[i];
+			}
+		}
+		else
+		{
+			strides_src = strides_array_; // just use strides_array_ if 'unsqueezing' was not performed
+		}
+
+
+		result.Allocate(dims_result, ndims, nullptr, false);
+		strides_dst = result.GetStrides();
+		dst = result.GetDataPtr();
+		src = data_ptr_;
+
+		numels = result.GetNumels();
+		if (numels)
+		{
+			OffsetCalc_repeat offs_calc(strides_dst, strides_src, dims_src, ndims);
+
+			for (u64i = 0; u64i < numels; u64i++)
+			{
+				src_offset = offs_calc.GetOffsets(u64i);
+
+				dst[u64i] = src[src_offset];
+			}
+
+			/*
+			for (u64i = 0; u64i < numels; u64i+=4)
+			{
+				src_offset = offs_calc.GetOffsets(u64i);
+
+				int claro = dims_array_[ndims_ - 1] % 4;
+
+				switch (claro)
+				{
+				case 0:
+					if (u64i + 4 < numels)
+					{
+						dst[u64i] = src[src_offset];
+						dst[u64i + 1] = src[src_offset + 1];
+						dst[u64i + 2] = src[src_offset + 2];
+						dst[u64i + 3] = src[src_offset + 3];
+					}
+					else
+					{
+						while (u64i < numels)
+						{
+							dst[u64i++] = src[src_offset++];
+						}
+					}
+					break;
+
+				case 1:
+
+					break;
+				}
+
+			}
+			*/
+		}
+
+		//----------------------------------------------------
+		// Reference code for repeat
+		//----------------------------------------------------
+		/*
+		for (u64i = 0; u64i < numels; u64i++)
+		{
+			src_offset = 0;
+			dst_offset = u64i;
+
+			for (j = 0; j < ndims; j++)
+			{
+				coordinate = dst_offset / strides_dst[j];
+				src_offset += (coordinate % dims_src[j]) * strides_src[j]; // convert from dst coordinate to src coordinate, then compute src offset
+
+				dst_offset = dst_offset % strides_dst[j];
+			}
+
+			dst[u64i] = src[src_offset];
+		}
+		*/
+		//----------------------------------------------------
+
+		return MultiDimArray(dims_result, ndims, dst, true);
+	}
+
+	MultiDimArray repeat_interleave(const uint32_t* repeats, int nrepeats, int dim, uint32_t* scratch)
+	{
+		MultiDimArray result;
+		uint64_t dims_result[MAX_DIMS];
+		const uint64_t* strides_dst;
+		int sum;
+		Dtype* dst;
+		uint32_t* cummulative_times;
+		uint64_t u64i;
+		uint64_t numels;
+		Dtype* src;
+		int i;
+		int j;
+		int k;
+		uint64_t coordinate;
+		uint64_t src_offset;
+		uint64_t dst_offset;
+
+		if (dim >= ndims_)
+		{
+			LTEN_ERR("Dimesion parameter is out of range");
+		}
+
+		if (nrepeats != dims_array_[dim])
+		{
+			LTEN_ERR("Sum of repeat values must equal size of dimension");
+		}
+
+		memcpy(dims_result, dims_array_, sizeof(uint64_t) * ndims_);
+		sum = 0;
+		for (i = 0; i < nrepeats; i++)
+		{
+			if (repeats[i] < 0)
+			{
+				LTEN_ERR("Repeat values must be greater than or equal to zero");
+			}
+			sum += repeats[i];
+		}
+		dims_result[dim] = sum;
+
+		cummulative_times = scratch;
+		if (!cummulative_times)
+		{
+			cummulative_times = new uint32_t[nrepeats + 1];
+		}
+
+		cummulative_times[0] = 0; // need this array for index look-up
+		for (i = 1; i < nrepeats; i++)
+		{
+			cummulative_times[i] = cummulative_times[i - 1] + repeats[i - 1];
+		}
+		cummulative_times[nrepeats] = INT_MAX; // need stopper value so that linear scan (below) works
+
+		result.Allocate(dims_result, ndims_, nullptr, false);
+
+		dst = result.GetDataPtr();
+		src = data_ptr_;
+		strides_dst = result.GetStrides();
+
+		numels = result.GetNumels();
+
+		if (numels)
+		{
+			OffsetCalc_repeat_interleave offs_calc(strides_dst, strides_array_, cummulative_times, ndims_, nrepeats, dim);
+
+			for (u64i = 0; u64i < numels; u64i++)
+			{
+				src_offset = offs_calc.GetOffsets(u64i);
+
+				dst[u64i] = src[src_offset];
+			}
+		}
+
+
+		//----------------------------------------------------
+		// Reference code for repeat_interleave
+		//----------------------------------------------------
+		/*
+		for (u64i = 0; u64i < numels; u64i++)
+		{
+			src_offset = 0;
+			dst_offset = u64i;
+
+			for (j = 0; j < ndims_; j++)
+			{
+				coordinate = dst_offset / strides_dst[j];
+				if (j == dim) // linear scan (binary search if nrepeats large?)
+				{
+					for (k = 0; k < nrepeats; k++)
+					{
+						if(coordinate < cummulative_times[k+1]) // find correct window for coordinate
+						{
+							break;
+						}
+					}
+
+					src_offset += k * strides_array_[j]; // coordinate is k
+				}
+				else
+				{
+					src_offset += coordinate * strides_array_[j]; // coordinate is same for non-dim axis
+				}
+
+
+				dst_offset = dst_offset % strides_dst[j];
+			}
+
+			dst[u64i] = src[src_offset];
+		}
+		*/
+		//----------------------------------------------------
+		if (cummulative_times != scratch)
+		{
+			delete cummulative_times;
+		}
+
+		return MultiDimArray(dims_result, ndims_, dst, true);
+	}
+	
 	bool check_broadcast_required(const uint64_t* other_dims_array, uint64_t* max_dims_array = nullptr, bool mat_mul_check = false) const
 	{
 		bool broadcast_required;

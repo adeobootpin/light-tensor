@@ -1585,6 +1585,112 @@ namespace lten {
 			return Tensor();
 		}
 
+		Tensor repeat(const uint32_t* repeats, int nrepeats)
+		{
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				resultImpl->repeat(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), repeats, nrepeats);
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					//resultImpl->masked_fill(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<int>*>(mask.smart_ptr_.get_real_object()), value);
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						//resultImpl->masked_fill(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<uint8_t>*>(mask.smart_ptr_.get_real_object()), value);
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
+
+		// scratch is optional but may make processing faster by avoiding memory allocations
+		// Note: nrepeats can be extremely large
+		// Optional buffer scratch, if provided should be of length nrepeats + 1
+		// It will be used to store the cummulative repeats array (see md_array repeat_interleave funs)
+		// Note: if backward processing is required, scratch *must* point to memory that is valid during backward processing
+		Tensor repeat_interleave(const uint32_t* repeats, int nrepeats, int dim, uint32_t* scratch = nullptr)
+		{
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				resultImpl->repeat_interleave(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), repeats, nrepeats, dim, scratch);
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					//resultImpl->masked_fill(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<int>*>(mask.smart_ptr_.get_real_object()), value);
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						//resultImpl->masked_fill(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<uint8_t>*>(mask.smart_ptr_.get_real_object()), value);
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
 
 		template<typename Dtype>
 		MultiDimArray<Dtype>* get_mdarray() const

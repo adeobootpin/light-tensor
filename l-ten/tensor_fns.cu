@@ -250,7 +250,7 @@ __global__ void gpu_mean_any_axes_kernel(Dtype* dst, const Dtype* __restrict__ s
 	offset_dst = (blockIdx.x * blockDim.x + threadIdx.x);
 	partial_offset_dst = offs_calc.GetPartialSrcOffset_d(offset_dst);
 
-	val;
+	val = 0;
 
 	for (i = 0; i < len; i++)
 	{
@@ -307,7 +307,7 @@ __global__ void gpu_mean_last_axis_only_kernel(Dtype* dst, const Dtype* src, con
 // row 2 -> read by warp 2 
 // row 3 -> read by warp 3 
 // then waps 0 - 3 are reduced (sum) into one row
-
+// i.e. interleave = 4 (unrelated to vec_size)
 template<typename Dtype>
 __global__ void gpu_mean_one_axis_only_vectorized_kernel(Dtype* dst, const Dtype* __restrict__ src, uint64_t stride, uint32_t len, float scale)
 {
@@ -355,7 +355,7 @@ __global__ void gpu_mean_one_axis_only_vectorized_kernel(Dtype* dst, const Dtype
 #pragma unroll
 	for (i = 0; i < vec_size; i++)
 	{
-		shared_memory[warpId * blockDim.x + laneIdx * 4 + i] = ((float*)&sum)[i] * scale;
+		shared_memory[warpId * blockDim.x + laneIdx * 4 + i] = ((float*)&sum)[i] * scale; // this line causes bank conflicts however they disappear if blockDim.x is replaced with actual value of 128 (compiler optimization?)
 	}
 
 	__syncthreads();
@@ -467,6 +467,7 @@ void gpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels_dst, const uin
 // general var functions (i.e. var with axes)
 //
 //-----------------------------------------------------------------------------------------------------
+// uses Welford's online algorithm (see:https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_Online_algorithm)
 template<typename Dtype>
 __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, const uint64_t numels, const uint32_t dim_len, float scale)
 {
@@ -647,6 +648,213 @@ void gpu_var(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t
 
 //-----------------------------------------------------------------------------------------------------
 //
+// layer norm functions
+//
+//-----------------------------------------------------------------------------------------------------
+template<typename Dtype>
+__global__ void gpu_layer_norm_last_axis_only_kernel(Dtype* dst, const Dtype* src, const uint64_t numels, const uint32_t dim_len, float scale, Dtype* weight, Dtype* bias, Dtype* ln, Dtype* sd)
+{
+	uint32_t offset_src;
+	uint32_t offset_dst;
+	float count;
+	float count_b;
+	float mean;
+	float mean_b;
+	float Ms;
+	float Ms_b;
+	float delta;
+	float n_ab;
+	float temp;
+	float std;
+	int i;
+	float epsilon = 0;
+
+	int warpIdx = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // absolute thread id /  warpSize
+	int laneIdx = threadIdx.x % warpSize;
+
+	offset_src = warpIdx * dim_len;
+
+	Ms = 0;
+	if (laneIdx < dim_len)
+	{
+		count = 1.0f;
+		mean = src[offset_src + laneIdx];
+	}
+	else
+	{
+		count = 0;
+		mean = 0;
+	}
+
+	offset_src += laneIdx + warpSize; // advance to next element
+
+	uint32_t end = warpIdx * dim_len + dim_len;
+
+	for (i = offset_src; i < end; i += warpSize)
+	{
+		count_b = 1;
+		mean_b = src[i];
+		Ms_b = 0;
+
+		n_ab = count + count_b;
+		temp = 1.0f / n_ab;
+		delta = mean_b - mean;
+		mean += delta * (count_b * temp);
+		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
+		count = n_ab;
+
+		offset_src += warpSize;
+	}
+
+
+	//
+	// reduce
+	//
+	//------------------------------------------------------
+	count_b = __shfl_down_sync(FULL_MASK, count, 16);
+	mean_b = __shfl_down_sync(FULL_MASK, mean, 16);
+	Ms_b = __shfl_down_sync(FULL_MASK, Ms, 16);
+	if (count_b)
+	{
+		n_ab = count + count_b;
+		temp = 1.0f / n_ab;
+		delta = mean_b - mean;
+		mean += delta * (count_b * temp);
+		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
+		count = n_ab;
+	}
+
+	count_b = __shfl_down_sync(FULL_MASK, count, 8);
+	mean_b = __shfl_down_sync(FULL_MASK, mean, 8);
+	Ms_b = __shfl_down_sync(FULL_MASK, Ms, 8);
+	if (count_b)
+	{
+		n_ab = count + count_b;
+		temp = 1.0f / n_ab;
+		delta = mean_b - mean;
+		mean += delta * (count_b * temp);
+		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
+		count = n_ab;
+	}
+
+
+	count_b = __shfl_down_sync(FULL_MASK, count, 4);
+	mean_b = __shfl_down_sync(FULL_MASK, mean, 4);
+	Ms_b = __shfl_down_sync(FULL_MASK, Ms, 4);
+	if (count_b)
+	{
+		n_ab = count + count_b;
+		temp = 1.0f / n_ab;
+		delta = mean_b - mean;
+		mean += delta * (count_b * temp);
+		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
+		count = n_ab;
+	}
+
+
+	count_b = __shfl_down_sync(FULL_MASK, count, 2);
+	mean_b = __shfl_down_sync(FULL_MASK, mean, 2);
+	Ms_b = __shfl_down_sync(FULL_MASK, Ms, 2);
+	if (count_b)
+	{
+		n_ab = count + count_b;
+		temp = 1.0f / n_ab;
+		delta = mean_b - mean;
+		mean += delta * (count_b * temp);
+		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
+		count = n_ab;
+	}
+
+
+	count_b = __shfl_down_sync(FULL_MASK, count, 1);
+	mean_b = __shfl_down_sync(FULL_MASK, mean, 1);
+	Ms_b = __shfl_down_sync(FULL_MASK, Ms, 1);
+	if (count_b)
+	{
+		n_ab = count + count_b;
+		temp = 1.0f / n_ab;
+		delta = mean_b - mean;
+		mean += delta * (count_b * temp);
+		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
+		count = n_ab;
+	}
+	//------------------------------------------------------
+
+
+	mean = __shfl_sync(FULL_MASK, mean, 0);
+	Ms = __shfl_sync(FULL_MASK, Ms, 0);
+
+	std = sqrt(Ms * scale + epsilon);
+
+	if (laneIdx == 0)
+	{
+		sd[warpIdx] = std;
+	}
+
+
+	offset_src = warpIdx * dim_len;
+
+	std = 1.0f / std; // invert so that multiplication can be used 
+
+	for (i = laneIdx; i < dim_len; i += warpSize)
+	{
+		temp = src[offset_src + i];
+		temp = (temp - mean) * std;
+
+		if (weight)
+		{
+			ln[offset_src + i] = temp;
+
+			temp = temp * weight[i] + bias[i];
+		}
+
+		dst[offset_src + i] = temp; // offset_src == offset_dst
+	}
+
+}
+
+template<typename Dtype>
+void gpu_layer_norm(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, Dtype* weight, Dtype* bias, Dtype* ln, Dtype* sd)
+{
+	uint64_t len;
+	int naxes;
+	int i;
+	int num_blocks;
+	uint32_t threads_per_block;
+	float scale;
+	int warps_required;
+	int warps_per_block;
+
+	naxes = ndims_src - ndims_dst;
+
+	if (naxes > 1 || (axes[0] != ndims_src - 1))
+	{
+		//OffsetCalc_mean_std_simple offs_calc(strides_dst, strides_src, ndims_dst, ndims_src, dims_src, axes);
+		LTEN_ERR("Not yet implemented: gpu_layer_norm for naxes > 1 or axis != last axis");
+	}
+	else
+	{
+		len = 1;
+		for (i = 0; i < naxes; i++)
+		{
+			len *= dims_src[axes[i]];
+		}
+
+		warps_required = numels / len; // one warp for each traversal along the axis
+		warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
+		threads_per_block = warps_per_block * CUDA_WARP_SIZE;
+		num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
+
+		scale = 1.0f / len; // use biased estimator
+
+
+		gpu_layer_norm_last_axis_only_kernel<Dtype> << <num_blocks, threads_per_block >> > (dst, src, numels, len, scale, weight, bias, ln, sd);
+	}
+}
+
+
+//-----------------------------------------------------------------------------------------------------
+//
 // transpose functions
 //
 //-----------------------------------------------------------------------------------------------------
@@ -671,7 +879,7 @@ __global__ void gpu_transpose_kernel(const float* __restrict__ A, float* At, int
 		}
 	}
 
-	index = threadIdx.x + block_work_size * blockIdx.x;;
+	index = threadIdx.x + block_work_size * blockIdx.x;
 
 #pragma unroll
 	for (int i = 0; i < thread_work_size; i++)
@@ -711,6 +919,100 @@ void gpu_transpose(const Dtype* A, Dtype* At, const uint64_t numels, const uint6
 }
 //-----------------------------------------------------------------------------------------------------
 
+
+
+//-----------------------------------------------------------------------------------------------------
+//
+// repeat functions
+//
+//-----------------------------------------------------------------------------------------------------
+__global__ void gpu_repeat_kernel(float* dst, float* src, int N, OffsetCalc_repeat offs_calc)
+{
+	float4 dodo;
+	unsigned int dst_offset;
+	unsigned int src_offset;
+
+	float* data = (float*)&dodo;
+
+	dst_offset = (blockIdx.x * blockDim.x + threadIdx.x) * thread_work_size;
+
+	if (dst_offset >= N)
+		return;
+#pragma unroll
+	for (int i = 0; i < thread_work_size; i++)
+	{
+		if (dst_offset < N)
+		{
+			src_offset = offs_calc.GetOffsets(dst_offset);
+			//dst[dst_offset] = src[src_offset];
+			data[i] = src[src_offset];
+		}
+		dst_offset++;
+	}
+
+	//*(reinterpret_cast<float4*>(&dst[dst_offset-4])) = *(reinterpret_cast<float4*>(data));
+	*(reinterpret_cast<float4*>(&dst[dst_offset - 4])) = dodo;
+}
+
+template<typename Dtype>
+void gpu_repeat(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint64_t* dims_src, const int ndims)
+{
+	/*
+	uint64_t N;
+	int num_blocks;
+
+	OffsetCalc_repeat offs_calc(strides_dst, strides_src, dims_src, ndims);
+
+	N = numels;
+
+	assert(N < UINT_MAX); // offsets are 32 bit
+
+	num_blocks = (static_cast<int>(N) + defa_threads - 1) / defa_threads;
+
+	gpu_repeat_kernel << < num_blocks, defa_threads >> > ((float*)dst, (float*)src, N, offs_calc);
+	*/
+
+	uint64_t N;
+	int num_blocks;
+
+	OffsetCalc_repeat offs_calc(strides_dst, strides_src, dims_src, ndims);
+
+	N = numels;
+
+	assert(N < UINT_MAX); // offsets are 32 bit
+
+	num_blocks = (static_cast<int>(N) + 256 - 1) / 256;
+
+	gpu_repeat_kernel << < num_blocks, defa_threads >> > ((float*)dst, (float*)src, N, offs_calc);
+
+}
+//-----------------------------------------------------------------------------------------------------
+
+
+//-----------------------------------------------------------------------------------------------------
+//
+// repeat interleave functions
+//
+//-----------------------------------------------------------------------------------------------------
+template<typename Dtype>
+void gpu_repeat_interleave(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_array, const uint32_t* cummulative_times, int ndims, int ndims_times, int dim)
+{
+	uint64_t N;
+	int num_blocks;
+
+	OffsetCalc_repeat_interleave offs_calc(strides_dst, strides_array, cummulative_times, ndims, ndims_times, dim);
+
+	N = numels;
+
+	assert(N < UINT_MAX); // offsets are 32 bit
+
+	num_blocks = (static_cast<int>(N) + defa_threads - 1) / defa_threads;
+
+	//gpu_repeat_interleave_kernel << < num_blocks, defa_threads >> > ((float*)dst, (float*)src, N, offs_calc);
+
+}
+//-----------------------------------------------------------------------------------------------------
+
 template void gpu_mean<float>(float* dst, const float* src, const uint64_t numels);
 template void gpu_mean<int>(int* dst, const int* src, const uint64_t numels);
 template void gpu_mean<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels);
@@ -727,6 +1029,19 @@ template void gpu_var<float>(float* dst, const float* src, const uint64_t numels
 template void gpu_var<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
 template void gpu_var<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
 
+template void gpu_layer_norm<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, float* weights, float* bias, float* ln, float* sd);
+template void gpu_layer_norm<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, int* weights, int* bias, int* ln, int* sd);
+template void gpu_layer_norm<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, uint8_t* weights, uint8_t* bias, uint8_t* ln, uint8_t* sd);
+
 template void gpu_transpose<float>(const float* A, float* At, const uint64_t numels, const uint64_t* a_strides, const uint64_t* at_strides, const int ndims);
 template void gpu_transpose<int>(const int* A, int* At, const uint64_t numels, const uint64_t* a_strides, const uint64_t* at_strides, const int ndims);
 template void gpu_transpose<uint8_t>(const uint8_t* A, uint8_t* At, const uint64_t numels, const uint64_t* a_strides, const uint64_t* at_strides, const int ndims);
+
+template void gpu_repeat<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint64_t* dims_src, const int ndims);
+template void gpu_repeat<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint64_t* dims_src, const int ndims);
+template void gpu_repeat<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint64_t* dims_src, const int ndims);
+
+template void gpu_repeat_interleave<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_array, const uint32_t* cummulative_times, int ndims, int ndims_times, int dim);
+template void gpu_repeat_interleave<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_array, const uint32_t* cummulative_times, int ndims, int ndims_times, int dim);
+template void gpu_repeat_interleave<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_array, const uint32_t* cummulative_times, int ndims, int ndims_times, int dim);
+

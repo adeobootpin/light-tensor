@@ -2198,6 +2198,120 @@ namespace lten {
 		}
 	}
 
+	template<typename Dtype>
+	void TensorImpl<Dtype>::repeat(TensorImpl& operand1, const uint32_t* repeats, int nrepeats)
+	{
+		MultiDimArray<Dtype>* op1_md_array;
+		TensorOps options;
+
+
+		options.data_type = operand1.get_data_type();
+		options.device_type = operand1.get_device();
+		options.device_index = operand1.get_device_index();
+
+		op1_md_array = operand1.get_mdarray();
+
+
+		if (options.device_type == CPU)
+		{
+			MultiDimArray<Dtype> result;
+
+			result = (*op1_md_array).repeat(repeats, nrepeats);
+
+			LTEN_ERR_CHECK(allocate_from_buffer(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true, &options));
+			result.SetMemoryOwnership(false); // this TensorImpl<Dtype> needs to keep the md_array's buffer so set ownership accordingly
+		}
+		else
+		{
+			if (options.device_type == GPU)
+			{
+#ifdef USE_CUDA
+				CUDA_MultiDimArray<Dtype> result;
+
+				result = (*(static_cast<CUDA_MultiDimArray<Dtype>*>(op1_md_array))).repeat(repeats, nrepeats);
+
+				LTEN_ERR_CHECK(allocate_from_buffer(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true, &options));
+				result.SetMemoryOwnership(false); // this TensorImpl<Dtype> needs to keep the md_array's buffer so set ownership accordingly
+#else
+				LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+			}
+			else
+			{
+				LTEN_ERR("Invalid tensor device type");
+			}
+		}
+
+		if (operand1.autograd_on())
+		{
+			add_child(operand1);
+			misc1_ = nrepeats;
+			//grad_fn_ = ::repeat_backward;
+			set_autograd(true);
+		}
+
+	}
+
+
+	template<typename Dtype>
+	void TensorImpl<Dtype>::repeat_interleave(TensorImpl& operand1, const uint32_t* repeats, int nrepeats, int dim, uint32_t* scratch)
+	{
+		MultiDimArray<Dtype>* op1_md_array;
+		TensorOps options;
+
+
+		options.data_type = operand1.get_data_type();
+		options.device_type = operand1.get_device();
+		options.device_index = operand1.get_device_index();
+
+		op1_md_array = operand1.get_mdarray();
+
+
+		if (options.device_type == CPU)
+		{
+			MultiDimArray<Dtype> result;
+
+			result = (*op1_md_array).repeat_interleave(repeats, nrepeats, dim, scratch);
+
+			LTEN_ERR_CHECK(allocate_from_buffer(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true, &options));
+			result.SetMemoryOwnership(false); // this TensorImpl<Dtype> needs to keep the md_array's buffer so set ownership accordingly
+		}
+		else
+		{
+			if (options.device_type == GPU)
+			{
+#ifdef USE_CUDA
+				CUDA_MultiDimArray<Dtype> result;
+
+				result = (*(static_cast<CUDA_MultiDimArray<Dtype>*>(op1_md_array))).repeat_interleave(repeats, nrepeats, dim, scratch);
+
+				LTEN_ERR_CHECK(allocate_from_buffer(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true, &options));
+				result.SetMemoryOwnership(false); // this TensorImpl<Dtype> needs to keep the md_array's buffer so set ownership accordingly
+#else
+				LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+			}
+			else
+			{
+				LTEN_ERR("Invalid tensor device type");
+			}
+		}
+
+		if (operand1.autograd_on())
+		{
+			if (!scratch)
+			{
+				LTEN_ERR("scratch buffer cannot be non-null if autograd is on");
+			}
+			add_child(operand1);
+			misc1_ = nrepeats;
+			misc2_ = dim;
+			misc_ptr1_ = scratch;
+			//grad_fn_ = ::repeat_interleave_backward;
+			set_autograd(true);
+		}
+
+	}
 
 	template int TensorImpl<float>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_memory, TensorOps* options_ptr);
 	template int TensorImpl<float>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_data_memory, void* gradient_ptr, bool own_gradient_memory, TensorOps* options_ptr);
@@ -2233,6 +2347,8 @@ namespace lten {
 	template void TensorImpl<float>::to(TensorImpl<float>& operand1, device target_device, int target_device_index);
 	template void TensorImpl<float>::transpose(TensorImpl<float>& operand1, int dim1, int dim2);
 	template void TensorImpl<float>::masked_fill(TensorImpl<float>& operand1, TensorImpl<float>& mask, double value);
+	template void TensorImpl<float>::repeat(TensorImpl<float>& operand1, const uint32_t* repeats, int nrepeats);
+	template void TensorImpl<float>::repeat_interleave(TensorImpl<float>& operand1, const uint32_t* dims_times, int ndims, int dim, uint32_t* scratch);
 
 	template int TensorImpl<int>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_memory, TensorOps* options_ptr);
 	template int TensorImpl<int>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_data_memory, void* gradient_ptr, bool own_gradient_memory, TensorOps* options_ptr);
@@ -2268,6 +2384,8 @@ namespace lten {
 	template void TensorImpl<int>::to(TensorImpl<int>& operand1, device target_device, int target_device_index);
 	template void TensorImpl<int>::transpose(TensorImpl<int>& operand1, int dim1, int dim2);
 	template void TensorImpl<int>::masked_fill(TensorImpl<int>& operand1, TensorImpl<int>& mask, double value);
+	template void TensorImpl<int>::repeat(TensorImpl<int>& operand1, const uint32_t* repeats, int nrepeats);
+	template void TensorImpl<int>::repeat_interleave(TensorImpl<int>& operand1, const uint32_t* dims_times, int ndims, int dim, uint32_t* scratch);
 
 	template int TensorImpl<uint8_t>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_memory, TensorOps* options_ptr);
 	template int TensorImpl<uint8_t>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_data_memory, void* gradient_ptr, bool own_gradient_memory, TensorOps* options_ptr);
@@ -2303,5 +2421,6 @@ namespace lten {
 	template void TensorImpl<uint8_t>::to(TensorImpl<uint8_t>& operand1, device target_device, int target_device_index);
 	template void TensorImpl<uint8_t>::transpose(TensorImpl<uint8_t>& operand1, int dim1, int dim2);
 	template void TensorImpl<uint8_t>::masked_fill(TensorImpl<uint8_t>& operand1, TensorImpl<uint8_t>& mask, double value);
-
+	template void TensorImpl<uint8_t>::repeat(TensorImpl<uint8_t>& operand1, const uint32_t* repeats, int nrepeats);
+	template void TensorImpl<uint8_t>::repeat_interleave(TensorImpl<uint8_t>& operand1, const uint32_t* dims_times, int ndims, int dim, uint32_t* scratch);
 } // namespace

@@ -35,6 +35,8 @@ int quantized_MNIST_test(const char* MNIST_training_images, const char* MNIST_tr
 void mean_test();
 void mean_test2();
 void var_test();
+void layerNorm_test();
+void maxPool3d_test();
 void transpose_test();
 void transpose_backwards_test();
 

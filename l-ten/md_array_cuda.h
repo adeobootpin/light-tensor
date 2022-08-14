@@ -621,6 +621,153 @@ public:
 
 	}
 
+	CUDA_MultiDimArray repeat(const uint32_t* repeats, int nrepeats)
+	{
+		CUDA_MultiDimArray result;
+		uint64_t dims_result[MAX_DIMS];
+		uint64_t dims_buffer[MAX_DIMS];
+		uint64_t strides_buffer[MAX_DIMS];
+		const uint64_t* strides_dst;
+		uint64_t* dims_src; // need 'squeezed' src dims if ndims > ndims_ 
+		uint64_t* strides_src;
+		uint64_t numels;
+		int i;
+		int j;
+		int ndims;
+
+		ndims = nrepeats;
+
+		if (ndims < ndims_)
+		{
+			LTEN_ERR("Number of repeat dimensions can not be less than number of tensor dimensions");
+		}
+
+
+		if (ndims > ndims_) // unsqueeze dims_array_
+		{
+			int len_diff = ndims - ndims_;
+			dims_src = dims_buffer;
+			for (i = 0; i < len_diff; i++)
+			{
+				dims_src[i] = 1;
+			}
+
+			memcpy(&dims_src[len_diff], dims_array_, sizeof(uint64_t) * ndims_);
+		}
+		else
+		{
+			dims_src = dims_array_;
+		}
+
+		for (i = 0; i < ndims; i++) // generate result dimesions
+		{
+			if (repeats[i] < 0)
+			{
+				LTEN_ERR("Repeat values must be greater than or equal to zero");
+			}
+
+			dims_result[i] = dims_src[i] * repeats[i];
+		}
+
+		ndims = std::max(ndims_, ndims);
+
+
+		if (ndims != ndims_)
+		{
+			strides_src = strides_buffer; // generate src strides in case 'sqeezing' was required
+			numels = 1;
+			for (i = ndims - 1; i >= 0; i--)
+			{
+				strides_src[i] = numels;
+				numels *= dims_src[i];
+			}
+		}
+		else
+		{
+			strides_src = strides_array_; // just use strides_array_ if 'squeezing' was not performed
+		}
+
+
+		result.Allocate(dims_result, ndims, nullptr, false);
+		numels = result.GetNumels();
+		if (numels)
+		{
+			gpu_repeat(result.GetDataPtr(), data_ptr_, numels, result.GetStrides(), strides_src, dims_src, ndims);
+		}
+
+		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
+	}
+
+	CUDA_MultiDimArray repeat_interleave(const uint32_t* repeats, int nrepeats, int dim, uint32_t* scratch)
+	{
+		CUDA_MultiDimArray result;
+		uint64_t dims_result[MAX_DIMS];
+		const uint64_t* strides_dst;
+		int sum;
+		Dtype* dst;
+		uint32_t* cummulative_times;
+		uint64_t numels;
+		Dtype* src;
+		int i;
+		int j;
+		int k;
+
+		if (dim >= ndims_)
+		{
+			LTEN_ERR("Dimesion parameter is out of range");
+		}
+
+		if (nrepeats != dims_array_[dim])
+		{
+			LTEN_ERR("Sum of repeat values must equal size of dimension");
+		}
+
+		memcpy(dims_result, dims_array_, sizeof(uint64_t) * ndims_);
+		sum = 0;
+		for (i = 0; i < nrepeats; i++)
+		{
+			if (repeats[i] < 0)
+			{
+				LTEN_ERR("Repeat values must be greater than or equal to zero");
+			}
+			sum += repeats[i];
+		}
+		dims_result[dim] = sum;
+
+		cummulative_times = scratch;
+		if (!cummulative_times)
+		{
+			cummulative_times = new uint32_t[nrepeats + 1];
+		}
+
+		cummulative_times[0] = 0; // need this array for index look-up
+		for (i = 1; i < nrepeats; i++)
+		{
+			cummulative_times[i] = cummulative_times[i - 1] + repeats[i - 1];
+		}
+		cummulative_times[nrepeats] = INT_MAX; // need stopper value so that linear scan (below) works
+
+		result.Allocate(dims_result, ndims_, nullptr, false);
+
+		dst = result.GetDataPtr();
+		src = data_ptr_;
+		strides_dst = result.GetStrides();
+
+		numels = result.GetNumels();
+
+		if (numels)
+		{
+			gpu_repeat_interleave(result.GetDataPtr(), data_ptr_, numels, result.GetStrides(), strides_array_, cummulative_times, ndims_, nrepeats, dim);
+		}
+
+		if (cummulative_times != scratch)
+		{
+			delete cummulative_times;
+		}
+
+		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
+	}
+
 	using MultiDimArray<Dtype>::ndims_;
 	using MultiDimArray<Dtype>::numels_;
 	using MultiDimArray<Dtype>::own_memory_;

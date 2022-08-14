@@ -147,6 +147,105 @@ void var_test()
 	printf("lten var test [duration: %f sec]\n", nseconds);
 }
 
+int layerNorm_test()
+{
+	int i;
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+
+	lten::Tensor a;
+	lten::Tensor b;
+
+
+	float* data;
+
+	data = new float[16 * 1568 * 768];
+	for (i = 0; i < 16 * 1568 * 768; i++)
+	{
+		data[i] = (rand() % 1000) * 0.0001f;
+	}
+
+	a = lten::TensorFromBuffer({ 1, 4, 1568, 768 }, data, false);
+
+	a = a.to(lten::GPU);
+
+
+	lten::LayerNorm ln(768, true);
+	ln.init();
+	ln.to(lten::GPU);
+
+
+	for (i = 0; i < 100000; i++)
+	//for (i = 0; i < 1; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+
+		b = ln.forward(a);
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten LayerNormTest [duration: %f sec]\n", nseconds);
+
+	return 0;
+}
+
+void maxPool3d_test()
+{
+	int i;
+
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+	lten::Tensor x;
+	lten::Tensor y;
+
+	int kernel_h = 2;
+	int kernel_w = 2;
+	int kernel_c = 2;
+	int stride_h = 1;
+	int stride_w = 1;
+	int stride_c = 1;
+	int pad_h = 0;
+	int pad_w = 0;
+	int pad_c = 0;
+
+	x = lten::RandomTensor({ 2, 3, 16, 224, 224 });
+
+	lten::pooling3d_CUDNN pool(0, kernel_h, kernel_w, kernel_c, pad_h, pad_w, pad_c, stride_h, stride_w, stride_c);
+	pool.init();
+
+	x = x.to(lten::GPU);
+
+	for (i = 0; i < 10000; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+
+		y = pool.forward(x);
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten maxPool3d_test [duration: %f sec]\n", nseconds);
+
+}
 
 int ReadDataFromFile(const char* file_name, void** pp_data, size_t* data_size);
 int conv3d_perf_test()
