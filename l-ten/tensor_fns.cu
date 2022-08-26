@@ -516,8 +516,12 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 
 		n_ab = count + count_b;
 		temp = 1.0f / n_ab;
+		
 		delta = mean_b - mean;
-		mean += delta * (count_b * temp);
+		//mean += delta * (count_b * temp);
+		mean = ((count * mean) + (count_b * mean_b)) / n_ab;
+
+
 		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
 		count = n_ab;
 	}
@@ -534,7 +538,8 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 		n_ab = count + count_b;
 		temp = 1.0f / n_ab;
 		delta = mean_b - mean;
-		mean += delta * (count_b * temp);
+		//mean += delta * (count_b * temp);
+		mean = ((count * mean) + (count_b * mean_b)) / n_ab;
 		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
 		count = n_ab;
 	}
@@ -547,7 +552,8 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 		n_ab = count + count_b;
 		temp = 1.0f / n_ab;
 		delta = mean_b - mean;
-		mean += delta * (count_b * temp);
+		//mean += delta * (count_b * temp);
+		mean = ((count * mean) + (count_b * mean_b)) / n_ab;
 		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
 		count = n_ab;
 	}
@@ -561,7 +567,8 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 		n_ab = count + count_b;
 		temp = 1.0f / n_ab;
 		delta = mean_b - mean;
-		mean += delta * (count_b * temp);
+		//mean += delta * (count_b * temp);
+		mean = ((count * mean) + (count_b * mean_b)) / n_ab;
 		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
 		count = n_ab;
 	}
@@ -575,7 +582,8 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 		n_ab = count + count_b;
 		temp = 1.0f / n_ab;
 		delta = mean_b - mean;
-		mean += delta * (count_b * temp);
+		//mean += delta * (count_b * temp);
+		mean = ((count * mean) + (count_b * mean_b)) / n_ab;
 		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
 		count = n_ab;
 	}
@@ -589,7 +597,8 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 		n_ab = count + count_b;
 		temp = 1.0f / n_ab;
 		delta = mean_b - mean;
-		mean += delta * (count_b * temp);
+		//mean += delta * (count_b * temp);
+		mean = ((count * mean) + (count_b * mean_b)) / n_ab;
 		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
 		count = n_ab;
 	}
@@ -1062,6 +1071,71 @@ void gpu_index(Dtype* dst, const Dtype* src, const int* indices, uint64_t copy_l
 //-----------------------------------------------------------------------------------------------------
 
 
+//-----------------------------------------------------------------------------------------------------
+//
+// permutation functions
+//
+//-----------------------------------------------------------------------------------------------------
+template<typename Dtype>
+__global__ void gpu_permute_kernel(Dtype* dst, const Dtype* src, const uint64_t N, OffsetCalc_permutaion ofs)
+{
+	uint32_t thread_id;
+	uint32_t i;
+	uint32_t grid_stride;
+
+	thread_id = blockIdx.x * blockDim.x + threadIdx.x; // global index;
+
+	grid_stride = blockDim.x * gridDim.x;
+
+	for (i = thread_id; i < N; i += grid_stride)
+	{
+		uint32_t offset;
+		offset = ofs.GetOffset(i);
+		dst[offset] = src[i];
+	}
+}
+
+template<typename Dtype>
+void gpu_permute(Dtype* dst, const Dtype* src, int ndims, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutations)
+{
+	OffsetCalc_permutaion ofs(strides_dst, strides_src, permutations, ndims);
+
+
+	gpu_permute_kernel << < 5, 128 >> > (dst, src, numels, ofs );
+}
+
+
+template<typename Dtype>
+__global__ void set_addresses_kernel(Dtype* base_addr_a, Dtype* base_addr_b, Dtype* base_addr_c, Dtype** addresses_a, Dtype** addresses_b, Dtype** addresses_c, const uint32_t* offsets_a, const uint32_t* offsets_b, const uint32_t* offsets_c, const uint64_t num_addresses)
+{
+	uint32_t thread_id;
+	uint32_t i;
+	uint32_t grid_stride;
+
+	thread_id = blockIdx.x * blockDim.x + threadIdx.x; // global index;
+
+	grid_stride = blockDim.x * gridDim.x;
+
+	for (i = thread_id; i < num_addresses; i += grid_stride)
+	{
+		addresses_a[i] = base_addr_a + offsets_a[i];
+		addresses_b[i] = base_addr_b + offsets_b[i];
+		addresses_c[i] = base_addr_c + offsets_c[i];
+	}
+}
+
+template<typename Dtype>
+void set_addresses(Dtype* A, Dtype* B, Dtype* C, POINTER_ARRAYS* addresses, const OFFSET_ARRAYS* offsets, const uint64_t num_addresses)
+{
+	int num_blocks;
+	int num_threads = 128;
+
+	num_blocks = max((int)1, (int)(num_addresses / num_threads));
+
+	set_addresses_kernel << < num_blocks, num_threads >> > (A, B, C, (Dtype**)addresses->a_array, (Dtype**)addresses->b_array, (Dtype**)addresses->c_array, offsets->a_array, offsets->b_array, offsets->c_array, num_addresses);
+}
+
+
 template void gpu_mean<float>(float* dst, const float* src, const uint64_t numels);
 template void gpu_mean<int>(int* dst, const int* src, const uint64_t numels);
 template void gpu_mean<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels);
@@ -1097,3 +1171,11 @@ template void gpu_repeat_interleave<uint8_t>(uint8_t* dst, const uint8_t* src, c
 template void gpu_index<float>(float* dst, const float* src, const int* indices, uint64_t copy_len, const uint64_t numels);
 template void gpu_index<int>(int* dst, const int* src, const int* indices, uint64_t copy_len, const uint64_t numels);
 template void gpu_index<uint8_t>(uint8_t* dst, const uint8_t* src, const int* indices, uint64_t copy_len, const uint64_t numels);
+
+template void gpu_permute<float>(float* dst, const float* src, int ndims, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutaions);
+template void gpu_permute<int>(int* dst, const int* src, int ndims, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutaions);
+template void gpu_permute<uint8_t>(uint8_t* dst, const uint8_t* src, int ndims, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutaions);
+
+template void set_addresses<float>(float* A, float* B, float* C, POINTER_ARRAYS* addresses, const OFFSET_ARRAYS* offsets, const uint64_t num_addresses);
+template void set_addresses<int>(int* A, int* B, int* C, POINTER_ARRAYS* addresses, const OFFSET_ARRAYS* offsets, const uint64_t num_addresses);
+template void set_addresses<uint8_t>(uint8_t* A, uint8_t* B, uint8_t* C, POINTER_ARRAYS* addresses, const OFFSET_ARRAYS* offsets, const uint64_t num_addresses);

@@ -1020,6 +1020,52 @@ namespace lten {
 	};
 
 
+	class Pseudo_Einsum_1 : public Module
+	{
+	public:
+		Pseudo_Einsum_1()
+		{
+			pa_.buffer = nullptr;
+			oa_.buffer = nullptr;
+
+			ndims_ = 0;
+			numels_ = 0;
+		}
+
+		~Pseudo_Einsum_1() {}
+
+		bool init();
+		Tensor forward(Tensor& A, Tensor& B);
+		void clear_gradients() {}
+		std::vector<Tensor*> get_all_weights() { std::vector<Tensor*> dud; return dud; }
+		void to(device target_device, int target_device_index) {}
+
+	private:
+		int ndims_;
+		uint64_t numels_;
+		POINTER_ARRAYS pa_;
+		OFFSET_ARRAYS oa_;
+	};
+
+	class Pseudo_Einsum_2 : public Module
+	{
+	public:
+		Pseudo_Einsum_2()
+		{
+
+		}
+
+		~Pseudo_Einsum_2() {}
+
+		bool init() { return true; }
+		Tensor forward(Tensor& A, Tensor& B);
+		void clear_gradients() {}
+		std::vector<Tensor*> get_all_weights() { std::vector<Tensor*> dud; return dud; }
+		void to(device target_device, int target_device_index) {}
+
+	private:
+
+	};
 
 	Tensor relu(Tensor& input);
 	Tensor softmax(Tensor& input, int dim = 1);

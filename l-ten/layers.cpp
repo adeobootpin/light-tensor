@@ -175,7 +175,7 @@ namespace lten {
 		alpha = 1.0f;
 		beta = 0;
 
-		cudnnErrCheck(cudnnSoftmaxForward(cudnnHandle, algo_, CUDNN_SOFTMAX_MODE_INSTANCE,
+		cudnnErrCheck(cudnnSoftmaxForward(cudnnHandle, algo_, CUDNN_SOFTMAX_MODE_CHANNEL,
 			&alpha,
 			inputDesc_,
 			input.get_data_ptr(),
@@ -274,4 +274,167 @@ namespace lten {
 
 	}
 
+
+	bool Pseudo_Einsum_1::init()
+	{
+		return true;
+	}
+
+	Tensor Pseudo_Einsum_1::forward(Tensor& A, Tensor& B)
+	{
+		//----------------------------------------------------------------------
+		// hack implementation of torch::einsum("bythwc, hkc->bythwk", { A, B })
+		// -this just A.matmul(B.transpose())
+		//----------------------------------------------------------------------
+		TensorOps options;
+		TensorImpl<float>* resultImpl;
+		cublasStatus_t status;
+		cublasHandle_t hCuBlas;
+		int ndims;
+		int numels;
+		int num_batches;
+		uint64_t result_dims[MAX_DIMS];
+		bool broadcast_required;
+		int i;
+		MultiDimArray<float>* A_md_array;
+
+
+		ndims = A.get_ndims();
+		numels = A.get_numels();
+
+		A_md_array = A.get_mdarray<float>();
+
+		broadcast_required = A_md_array->check_broadcast_required(B.get_sizes(), result_dims, true);
+
+		options.data_type = A.get_data_type();
+		options.device_index = A.get_device_index();
+		options.device_type = A.get_device();
+				
+		resultImpl = new TensorImpl<float>;
+		intrusive_ptr<TensorImplBase> result(resultImpl);
+		resultImpl->allocate(result_dims, ndims, &options);
+
+		num_batches = resultImpl->get_numels() / (result_dims[ndims - 1] * result_dims[ndims - 2]);
+
+		if (ndims != ndims_ || numels != numels_) // fast (but weak) test to ensure nothing has changed
+		{
+			FreeMemoryOnGPU(pa_.buffer);
+			FreeMemoryOnGPU(oa_.buffer);
+
+			OFFSET_ARRAYS oa_cpu;
+
+			AllocateMemoryOnGPU(&pa_.buffer, 3 * sizeof(float*) * num_batches, false);
+			pa_.a_array = (void**)pa_.buffer;
+			pa_.b_array = (void**)pa_.buffer + num_batches;
+			pa_.c_array = (void**)pa_.buffer + 2 * num_batches;
+
+
+			AllocateMemoryOnGPU(&oa_.buffer, 3 * sizeof(uint32_t*) * num_batches, false);
+			oa_.a_array = (uint32_t*)oa_.buffer;
+			oa_.b_array = (uint32_t*)oa_.buffer + num_batches;
+			oa_.c_array = (uint32_t*)oa_.buffer + 2 * num_batches;
+
+			oa_cpu.buffer = new uint32_t[3 * num_batches];
+			oa_cpu.a_array = (uint32_t*)oa_cpu.buffer;
+			oa_cpu.b_array = (uint32_t*)oa_cpu.buffer + num_batches;
+			oa_cpu.c_array = (uint32_t*)oa_cpu.buffer + 2 * num_batches;
+
+			MultiDimArray<float>* B_md_array = B.get_mdarray<float>();
+			MultiDimArray<float>* C_md_array = resultImpl->get_mdarray();
+
+			float* A_base = (float*)A.get_data_ptr();
+			float* B_base = (float*)B.get_data_ptr();
+			float* C_base = (float*)result->get_data_ptr();
+
+			int index = 0;
+			md_array_dim_iterator it(result_dims, ndims - 2);
+			for (auto higher_indices : it)
+			{
+				float* result_data = C_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
+				float* lhs_data = A_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
+				float* rhs_data = B_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
+
+				oa_cpu.a_array[index] = lhs_data - A_base;
+				oa_cpu.b_array[index] = rhs_data - B_base;
+				oa_cpu.c_array[index] = result_data - C_base;
+
+				index++;
+			}
+			
+			CopyDataToGPU(oa_.buffer, oa_cpu.buffer, 3 * sizeof(uint32_t) * num_batches);
+		}
+
+		set_addresses((float*)A.get_data_ptr(), (float*)B.get_data_ptr(), (float*)resultImpl->get_data_ptr(), &pa_, &oa_, num_batches);
+
+		ndims_ = ndims;
+		numels_ = numels;
+
+		hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(0);
+
+		float alpha = 1.0f;
+		float beta = 0.0f;
+
+		uint64_t M;
+		uint64_t N;
+		uint64_t K;
+
+		int lda;
+		int ldb;
+		int ldc;
+
+		M = result_dims[ndims_ - 2];
+		N = result_dims[ndims_ - 1];
+		K = A.get_sizes()[ndims_ - 1];
+
+		lda = static_cast<int>(K);
+		ldb = static_cast<int>(K);
+		ldc = static_cast<int>(N);
+
+
+		status = cublasSgemmBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
+			(float**)pa_.b_array, lda, (float**)pa_.a_array, ldb, &beta, (float**)pa_.c_array, ldc, num_batches);
+
+
+		return Tensor(result);
+	}
+
+
+	Tensor Pseudo_Einsum_2::forward(Tensor& A, Tensor& B)
+	{
+		//----------------------------------------------------------------------
+		// hack implementation of torch::einsum("bythwc, wkc->bythwk", { A, B })
+		//----------------------------------------------------------------------
+		uint64_t result_dims[MAX_DIMS] = { 56, 2, 8, 56, 1, 1, 7 };
+		uint32_t permutation[MAX_DIMS] = { 1, 5, 2, 3, 0, 6, 4 };
+		TensorOps options;
+		TensorImpl<float>* resultImpl;
+		int ndims;
+
+		options.data_type = A.get_data_type();
+		options.device_index = A.get_device_index();
+		options.device_type = A.get_device();
+
+		ndims = 7;
+		resultImpl = new TensorImpl<float>;
+		intrusive_ptr<TensorImplBase> result(resultImpl);
+		resultImpl->allocate(result_dims, ndims, &options);
+
+
+		float alpha = 1.0f;
+		float beta = 0.0f;
+
+		int lda;
+		int ldb;
+		int ldc;
+
+		cublasStatus_t status;
+		cublasHandle_t hCuBlas;
+
+		hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(0);
+
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, 7, 896, 96, &alpha, (float*)B.get_data_ptr(), 96, 672, (float*)A.get_data_ptr(), 5376, 96, &beta, (float*)resultImpl->get_data_ptr(), 7, 6272, 56);
+
+
+		return Tensor(result);
+	}
 } // namespace lten

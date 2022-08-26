@@ -201,7 +201,7 @@ namespace lten {
 		void index(TensorImpl& operand1, TensorImpl<int>& index_operand);
 		void repeat(TensorImpl& operand1, const uint32_t* repeats, int nrepeats);
 		void repeat_interleave(TensorImpl& operand1, const uint32_t* repeats, int nrepeats, int dim, uint32_t* scratch);
-
+		void permute(TensorImpl& operand1, const uint32_t* permutations, int npermutations);
 
 		void(*grad_fn_)(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, TensorImpl** children_ptr_array, int child_index, TensorImpl* parent_ptr);
 

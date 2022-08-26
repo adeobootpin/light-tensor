@@ -2330,6 +2330,77 @@ namespace lten {
 
 	}
 
+
+	template<typename Dtype>
+	void TensorImpl<Dtype>::permute(TensorImpl& operand1, const uint32_t* permutations, int npermutations)
+	{
+		TensorOps options;
+		int ndims;
+		int i;
+		const uint64_t* src_dims;
+		uint64_t dims[MAX_DIMS];
+		uint64_t numels;
+
+		ndims = operand1.get_ndims();
+
+		if (ndims != npermutations)
+		{
+			LTEN_ERR("Permutations must be the same number as tensor dimensions");
+		}
+
+
+		options.data_type = operand1.get_data_type();
+		options.device_type = operand1.get_device();
+		options.device_index = operand1.get_device_index();
+
+		src_dims = operand1.get_sizes();
+
+		for (i = 0; i < ndims; i++)
+		{
+			dims[i] = src_dims[permutations[i]];
+		}
+
+		
+		allocate(dims, ndims, &options);
+
+		numels = operand1.get_numels();
+
+		if (options.device_type == CPU)
+		{
+			//TODO: move to approprite file and multithread
+			OffsetCalc_permutaion ofs(get_strides(), operand1.get_strides(), permutations, ndims);
+			Dtype* src = (Dtype*)operand1.get_data_ptr();
+			Dtype* dst = (Dtype*)get_data_ptr();
+
+			for (i = 0; i < numels; i++)
+			{
+				uint32_t offset;
+				offset = ofs.GetOffset(i);
+				dst[offset] = src[i];
+			}
+		}
+		else
+		{
+			if (options.device_type == GPU)
+			{
+#ifdef USE_CUDA
+
+				gpu_permute((Dtype*)get_data_ptr(), (Dtype*)operand1.get_data_ptr(), ndims, operand1.get_numels(), get_strides(), operand1.get_strides(), permutations);
+
+#else
+				LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+			}
+			else
+			{
+				LTEN_ERR("Invalid tensor device type");
+			}
+		}
+
+
+	}
+
+
 	template<typename Dtype>
 	void TensorImpl<Dtype>::add_child(TensorImpl<Dtype>& child)
 	{
@@ -2415,6 +2486,7 @@ namespace lten {
 	template void TensorImpl<float>::index(TensorImpl<float>& operand1, TensorImpl<int>& index_operand);
 	template void TensorImpl<float>::repeat(TensorImpl<float>& operand1, const uint32_t* repeats, int nrepeats);
 	template void TensorImpl<float>::repeat_interleave(TensorImpl<float>& operand1, const uint32_t* dims_times, int ndims, int dim, uint32_t* scratch);
+	template void TensorImpl<float>::permute(TensorImpl<float>& operand1, const uint32_t* permutations, int npermutations);
 
 	template int TensorImpl<int>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_memory, TensorOps* options_ptr);
 	template int TensorImpl<int>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_data_memory, void* gradient_ptr, bool own_gradient_memory, TensorOps* options_ptr);
@@ -2453,6 +2525,7 @@ namespace lten {
 	template void TensorImpl<int>::index(TensorImpl<int>& operand1, TensorImpl<int>& index_operand);
 	template void TensorImpl<int>::repeat(TensorImpl<int>& operand1, const uint32_t* repeats, int nrepeats);
 	template void TensorImpl<int>::repeat_interleave(TensorImpl<int>& operand1, const uint32_t* dims_times, int ndims, int dim, uint32_t* scratch);
+	template void TensorImpl<int>::permute(TensorImpl<int>& operand1, const uint32_t* permutations, int npermutations);
 
 	template int TensorImpl<uint8_t>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_memory, TensorOps* options_ptr);
 	template int TensorImpl<uint8_t>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_data_memory, void* gradient_ptr, bool own_gradient_memory, TensorOps* options_ptr);
@@ -2491,4 +2564,5 @@ namespace lten {
 	template void TensorImpl<uint8_t>::index(TensorImpl<uint8_t>& operand1, TensorImpl<int>& index_operand);
 	template void TensorImpl<uint8_t>::repeat(TensorImpl<uint8_t>& operand1, const uint32_t* repeats, int nrepeats);
 	template void TensorImpl<uint8_t>::repeat_interleave(TensorImpl<uint8_t>& operand1, const uint32_t* dims_times, int ndims, int dim, uint32_t* scratch);
+	template void TensorImpl<uint8_t>::permute(TensorImpl<uint8_t>& operand1, const uint32_t* permutations, int npermutations);
 } // namespace

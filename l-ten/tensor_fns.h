@@ -5,6 +5,23 @@ enum { MAX_DIMS = 16 };
 
 #include "offset_calc.h"
 
+typedef struct TAG_POINTER_ARRAYS
+{
+	void** a_array;
+	void** b_array;
+	void** c_array;
+	void* buffer;
+}POINTER_ARRAYS;
+
+typedef struct TAG_OFFSET_ARRAYS
+{
+	uint32_t* a_array;
+	uint32_t* b_array;
+	uint32_t* c_array;
+	void* buffer;
+}OFFSET_ARRAYS;
+
+
 #ifdef USE_OPENBLAS
 extern "C"
 {
@@ -38,5 +55,11 @@ void gpu_repeat_interleave(Dtype* dst, const Dtype* src, const uint64_t numels, 
 
 template<typename Dtype>
 void gpu_index(Dtype* dst, const Dtype* src, const int* indices, uint64_t copy_len, const uint64_t numels);
+
+template<typename Dtype>
+void gpu_permute(Dtype* dst, const Dtype* src, int ndims, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutations);
+
+template<typename Dtype>
+void set_addresses(Dtype* A, Dtype* B, Dtype* C, POINTER_ARRAYS* addresses, const OFFSET_ARRAYS* offsets, const uint64_t num_addresses);
 
 #endif // TENSOR_FNS_H

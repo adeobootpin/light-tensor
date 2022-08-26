@@ -447,6 +447,169 @@ public:
 		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
 	}
 
+	CUDA_MultiDimArray matmul(CUDA_MultiDimArray& other, POINTER_ARRAYS* pointer_array = nullptr)
+	{
+		const uint64_t* other_dims_array;
+		uint64_t dims_result[MAX_DIMS];
+		CUDA_MultiDimArray result;
+		uint64_t M;
+		uint64_t N;
+		uint64_t K;
+		float alpha;
+		float beta;
+		int lda;
+		int ldb;
+		int ldc;
+		int original_ndims = 0;
+		bool broadcast_required;
+
+		if (ndims_ != other.GetNDims())
+		{
+			LTEN_ERR("MultiDimArrays must have the same number of dimensions");
+		}
+
+		if (ndims_ < 2)
+		{
+			original_ndims = ndims_;
+			Reshape(2);
+			other.Reshape(2);
+		}
+
+		other_dims_array = other.GetSizes();
+		if (dims_array_[ndims_ - 1] != other_dims_array[ndims_ - 2]) // check matrix dimension compatibility
+		{
+			LTEN_ERR("MultiDimArrays must have compatiple dimensions");
+		}
+
+
+		broadcast_required = check_broadcast_required(other_dims_array, dims_result, true);
+
+		result.Allocate(dims_result, ndims_, nullptr, false);
+
+
+		cublasStatus_t status;
+		cublasHandle_t hCuBlas;
+
+		hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(device_index_);
+
+		alpha = 1.0f;
+		beta = 0.0f;
+
+		M = dims_result[ndims_ - 2];
+		N = dims_result[ndims_ - 1];
+		K = dims_array_[ndims_ - 1];
+
+		lda = static_cast<int>(N);
+		ldb = static_cast<int>(K);
+		ldc = static_cast<int>(N);
+
+		if (!broadcast_required)
+		{
+			int num_batches;
+
+			num_batches = numels_ / (dims_array_[ndims_ - 1] * dims_array_[ndims_ - 2]);
+
+			if (ndims_ < 3 || num_batches == 1)
+			{
+				Dtype* result_data = result.GetDataPtr();
+				Dtype* lhs_data = GetDataPtr();
+				Dtype* rhs_data = other.GetDataPtr();
+
+				//status = cublasSgemm(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
+				//	(float*)rhs_data, lda, (float*)lhs_data, ldb, &beta, (float*)result_data, ldc);
+
+				lda = K;
+				status = cublasSgemm(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
+					(float*)rhs_data, lda, (float*)lhs_data, ldb, &beta, (float*)result_data, ldc);
+			}
+			else
+			{
+				Dtype* result_data = result.GetDataPtr();
+				Dtype* lhs_data = GetDataPtr();
+				Dtype* rhs_data = other.GetDataPtr();
+
+				int stridea = N * K;
+				int strideb = K * M;
+				int stridec = N * M;
+
+				status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
+					(float*)rhs_data, lda, stridea, (float*)lhs_data, ldb, strideb, &beta, (float*)result_data, ldc, stridec, num_batches);
+			}
+
+			cudaDeviceSynchronize();
+		}
+		else
+		{
+			Dtype* result_data = result.GetDataPtr();
+			Dtype* lhs_data = GetDataPtr();
+			Dtype* rhs_data = other.GetDataPtr();
+			int num_batches;
+
+			num_batches = result.GetNumels() / (dims_result[ndims_ - 1] * dims_result[ndims_ - 2]);
+
+			if (!pointer_array)
+			{
+				POINTER_ARRAYS pa_gpu;
+				POINTER_ARRAYS pa_cpu;
+
+				AllocateMemoryOnGPU(&pa_gpu.buffer, 3 * sizeof(float*) * num_batches, false);
+				pa_gpu.a_array = (void**)pa_gpu.buffer;
+				pa_gpu.b_array = (void**)pa_gpu.buffer + num_batches;
+				pa_gpu.c_array = (void**)pa_gpu.buffer + 2 * num_batches;
+
+				pa_cpu.buffer = new float*[3 * num_batches];
+				pa_cpu.a_array = (void**)pa_cpu.buffer;
+				pa_cpu.b_array = (void**)pa_cpu.buffer + num_batches;
+				pa_cpu.c_array = (void**)pa_cpu.buffer + 2 * num_batches;
+
+
+				int index = 0;
+				md_array_dim_iterator it(dims_result, ndims_ - 2);
+				for (auto higher_indices : it)
+				{
+					Dtype* result_data = result.GetDataPtr(higher_indices, ndims_ - 2, broadcast_required);
+					Dtype* lhs_data = GetDataPtr(higher_indices, ndims_ - 2, broadcast_required);
+					Dtype* rhs_data = other.GetDataPtr(higher_indices, ndims_ - 2, broadcast_required);
+
+					pa_cpu.a_array[index] = (float*)lhs_data;
+					pa_cpu.b_array[index] = (float*)rhs_data;
+					pa_cpu.c_array[index] = (float*)result_data;
+					index++;
+				}
+
+				assert(index == num_batches);
+				CopyDataToGPU(pa_gpu.buffer, pa_cpu.buffer, 3 * sizeof(float*) * num_batches);
+
+				pointer_array = &pa_gpu;
+
+				//status = cublasSgemmBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
+				//	(float**)pointer_array->b_array, lda, (float**)pointer_array->a_array, ldb, &beta, (float**)pointer_array->c_array, ldc, num_batches);
+
+				lda = K;
+				status = cublasSgemmBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
+					(float**)pointer_array->b_array, lda, (float**)pointer_array->a_array, ldb, &beta, (float**)pointer_array->c_array, ldc, num_batches);
+
+				delete pa_cpu.buffer;
+				FreeMemoryOnGPU(pa_gpu.buffer);
+			}
+			else
+			{
+				status = cublasSgemmBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
+					(float**)pointer_array->b_array, lda, (float**)pointer_array->a_array, ldb, &beta, (float**)pointer_array->c_array, ldc, num_batches);
+			}
+
+		}
+
+		if (original_ndims)
+		{
+			Reshape(original_ndims);
+			other.Reshape(original_ndims);
+			result.Reshape(original_ndims);
+		}
+
+		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
+	}
+	/*
 	CUDA_MultiDimArray matmul(CUDA_MultiDimArray& other)
 	{
 		const uint64_t* other_dims_array;
@@ -523,6 +686,7 @@ public:
 
 		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
 	}
+	*/
 
 	CUDA_MultiDimArray transpose(int dim_1, int dim_2)
 	{

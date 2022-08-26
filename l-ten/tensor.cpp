@@ -245,8 +245,15 @@ namespace lten {
 		{
 			if (data_type == INT32)
 			{
-				LTEN_ERR("Not yet implemented: RandomTensor INT32");
 				data_ptr = new int[numels];
+				for (i = 0; i < numels; i++)
+				{
+					static_cast<int*>(data_ptr)[i] = rand() % 1000;
+					if (!(rand() % 2))
+					{
+						static_cast<int*>(data_ptr)[i] *= -1;
+					}
+				}
 			}
 			else
 			{

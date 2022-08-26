@@ -318,7 +318,6 @@ void repeat_interleave_test()
 	time_span = clock_end - clock_begin;
 	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
 	printf("lten repeat interleave [duration: %f sec]\n", nseconds);
-
 }
 
 void index_test()
@@ -389,6 +388,109 @@ void index_test()
 	printf("lten::index [duration: %f sec]\n", nseconds);
 
 }
+
+void embedding_test()
+{
+	int i;
+
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+	unsigned int num_embeddings;
+	unsigned int embedding_dim;
+
+	lten::Tensor x;
+	lten::Tensor y;
+
+	num_embeddings = 2048;
+	embedding_dim =  1024;
+
+	uint64_t len;
+	int* data;
+	lten::TensorOps options;
+	options.data_type = lten::INT32;
+
+	x = lten::AllocateTensor({ 8, 4096 }, &options);
+
+	data = (int*)x.get_data_ptr();
+	len = x.get_numels();
+
+	for (i = 0; i < len; i++)
+	{
+		data[i] = rand() % num_embeddings;
+	}
+
+	x = x.to(lten::GPU);
+
+
+	lten::Embedding emb(num_embeddings, embedding_dim);
+	emb.init();
+	emb.to(lten::GPU);
+
+	//for (i = 0; i < 100000; i++)
+	for (i = 0; i < 1; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+		y = emb.forward(x);
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten embedding_test [duration: %f sec]\n", nseconds);
+}
+
+
+
+void einsum2_test()
+{
+	//einsum("bythwc, hkc->bythwk")
+	int i;
+
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+
+	lten::Tensor a;
+	lten::Tensor b;
+	lten::Tensor c;
+
+	cublasStatus_t status;
+	cublasHandle_t hCuBlas;
+
+	hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(0);
+
+
+	a = lten::RandomTensor({ 2, 1, 8, 56, 56, 96 });
+	b = lten::RandomTensor({ 1, 1, 1, 56,  7, 96 });
+
+	//for (i = 0; i < 100000; i++)
+	for (i = 0; i < 1; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten einsum2_test [duration: %f sec]\n", nseconds);
+
+}
+
 
 int ReadDataFromFile(const char* file_name, void** pp_data, size_t* data_size);
 int conv3d_perf_test()

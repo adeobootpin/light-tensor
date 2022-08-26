@@ -41,7 +41,7 @@ void transpose_test();
 void repeat_test();
 void repeat_interleave_test();
 void index_test();
-
+void embedding_test();
 void transpose_backwards_test();
 
 #endif // TESTS_H
