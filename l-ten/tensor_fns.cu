@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <tuple>
 #include <stdio.h>
+#include "layers.h"
 #include "error.h"
 #include "utils.h"
 
@@ -861,6 +862,187 @@ void gpu_layer_norm(Dtype* dst, const Dtype* src, const uint64_t numels, const u
 	}
 }
 
+template<typename Dtype>
+__global__ void gpu_layer_norm_wt_bias_backward_kernel(Dtype* wt_grad, Dtype* bias_grad, const Dtype* top_gradient, Dtype* feeder_gradient, Dtype* lnorm, Dtype* sd, Dtype* wt, const uint64_t numels, const uint32_t dim_len)
+{
+	uint32_t offset_src;
+	uint32_t len;
+	uint32_t i;
+	float w_grd;
+	float b_grd;
+	float top_grd;
+	float wts;
+
+	__shared__ float s1[16 * 32]; // TODO make these dynamic
+	__shared__ float s2[16 * 32];
+
+	int warpIdx = threadIdx.x / warpSize; // * local warp id = local thread id /  warpSize
+	int laneIdx = threadIdx.x % warpSize;
+
+	offset_src = blockIdx.x * warpSize + warpIdx * dim_len + laneIdx; // consecutive rows for each warp
+	wts = wt[blockIdx.x * warpSize + laneIdx];
+	w_grd = 0;
+	b_grd = 0;
+
+	len = numels / dim_len / 16;
+
+	for (i = 0; i < len; i++)
+	{
+		if (offset_src < numels)
+		{
+			top_grd = top_gradient[offset_src];
+			w_grd += top_grd * lnorm[offset_src];
+			b_grd += top_grd;
+
+			feeder_gradient[offset_src] = top_grd * wts;
+		}
+		offset_src += dim_len * 16;
+	}
+
+	s1[warpIdx * warpSize + laneIdx] = w_grd;
+	s2[warpIdx * warpSize + laneIdx] = b_grd;
+	__syncthreads();
+
+
+	if (warpIdx > 0)
+	{
+		return;
+	}
+
+	w_grd = 0;
+	b_grd = 0;
+
+	for (i = 0; i < 16; i++)
+	{
+		w_grd += s1[i * warpSize + laneIdx];
+		b_grd += s2[i * warpSize + laneIdx];
+	}
+
+	wt_grad[blockIdx.x * warpSize + laneIdx] = w_grd;
+	bias_grad[blockIdx.x * warpSize + laneIdx] = b_grd;
+
+}
+
+
+template<typename Dtype>
+__global__ void gpu_layer_norm_backward_kernel(Dtype* x_grad, Dtype* wt, Dtype* lnorm, Dtype* sd, Dtype* feeder_gradient, const uint64_t numels, const uint32_t dim_len)
+{
+	uint32_t offset;
+	uint32_t i;
+	uint32_t index;
+	float m_g;
+	float f_g;
+	float tmp;
+	float invsd;
+	float l_n;
+
+	__shared__ float fg[768]; // TODO make these dynamic
+	__shared__ float ln[768];
+
+
+	int warpIdx = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // absolute thread id /  warpSize
+	int laneIdx = threadIdx.x % warpSize;
+
+	offset = dim_len * warpIdx;
+	m_g = 0;
+	tmp = 0;
+	invsd = 1.0f / sd[blockIdx.x];
+
+	index = offset + laneIdx;
+#pragma unroll
+	for (i = 0; i < 24; i++)
+	{
+		if ((index - offset) < dim_len)
+		{
+			f_g = feeder_gradient[index];
+			l_n = lnorm[index];
+			m_g -= f_g * invsd;
+			tmp -= f_g * l_n;
+
+			fg[laneIdx + i * warpSize] = f_g;
+			ln[laneIdx + i * warpSize] = l_n;
+
+			index += warpSize;
+		}
+	}
+
+
+	//
+	// reduce
+	//
+	m_g += __shfl_down_sync(FULL_MASK, m_g, 16);
+	tmp += __shfl_down_sync(FULL_MASK, tmp, 16);
+
+	m_g += __shfl_down_sync(FULL_MASK, m_g, 8);
+	tmp += __shfl_down_sync(FULL_MASK, tmp, 8);
+
+	m_g += __shfl_down_sync(FULL_MASK, m_g, 4);
+	tmp += __shfl_down_sync(FULL_MASK, tmp, 4);
+
+	m_g += __shfl_down_sync(FULL_MASK, m_g, 2);
+	tmp += __shfl_down_sync(FULL_MASK, tmp, 2);
+
+	m_g += __shfl_down_sync(FULL_MASK, m_g, 1);
+	tmp += __shfl_down_sync(FULL_MASK, tmp, 1);
+
+
+	m_g = __shfl_sync(FULL_MASK, m_g, 0);
+	tmp = __shfl_sync(FULL_MASK, tmp, 0);
+
+
+	float inv_dim = 0.00130208333333333333333333333333f;
+
+	index = offset + laneIdx;
+#pragma unroll
+	for (i = 0; i < 24; i++)
+	{
+		if ((index - offset) < dim_len)
+		{
+			//x_grad[index] = (feeder_gradient[index] + inv_dim * lnorm[index] * tmp) *  invsd + inv_dim * m_g;
+			x_grad[index] = (fg[laneIdx + i * warpSize] + inv_dim * ln[laneIdx + i * warpSize] * tmp) *  invsd + inv_dim * m_g;
+			//x_grad[index] = (fg[index%768] + inv_dim * ln[index % 768] * tmp) *  invsd + inv_dim * m_g;
+		}
+		index += warpSize;
+	}
+
+}
+
+
+template<typename Dtype>
+void gpu_layer_norm_backwards(void* vlayer_norm, Dtype* x, Dtype* top_gradient, Dtype* bottom_gradient)
+{
+	lten::LayerNorm* layer_norm;
+	Dtype* ln;
+	Dtype* sd;
+	Dtype* wt;
+	Dtype* wt_grad;
+	Dtype* bias_grad;
+	Dtype* feeder_gradient;
+
+	layer_norm = (lten::LayerNorm*)vlayer_norm;
+
+	uint64_t numels = 4 * 1568 * 768;
+
+	ln = layer_norm->get_ln()->get_mdarray<Dtype>()->GetDataPtr();
+	sd = layer_norm->get_sd()->get_mdarray<Dtype>()->GetDataPtr();
+
+	if (layer_norm->is_affine())
+	{
+		wt = layer_norm->get_weights()->get_mdarray<Dtype>()->GetDataPtr();
+		wt_grad = layer_norm->get_weights()->get_gradients_mdarray<Dtype>()->GetDataPtr();
+		bias_grad = layer_norm->get_bias()->get_gradients_mdarray<Dtype>()->GetDataPtr();
+		feeder_gradient = (Dtype*)layer_norm->get_feeder_gradient()->get_data_ptr();
+
+		gpu_layer_norm_wt_bias_backward_kernel<Dtype> << <24, 32 * 16 >> > (wt_grad, bias_grad, top_gradient, feeder_gradient, ln, sd, wt, numels, 768);
+	}
+	else
+	{
+		feeder_gradient = top_gradient;
+	}
+
+	gpu_layer_norm_backward_kernel<Dtype> << <392 * 16, 32 * 1 >> > (bottom_gradient, wt, ln, sd, feeder_gradient, numels, 768);
+
+}
 
 //-----------------------------------------------------------------------------------------------------
 //
@@ -1095,16 +1277,37 @@ __global__ void gpu_permute_kernel(Dtype* dst, const Dtype* src, const uint64_t 
 	}
 }
 
+
 template<typename Dtype>
-void gpu_permute(Dtype* dst, const Dtype* src, int ndims, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutations)
+void gpu_permute(Dtype* dst, const Dtype* src, int ndims, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutations, bool reverse )
 {
-	OffsetCalc_permutaion ofs(strides_dst, strides_src, permutations, ndims);
+	//-------------------------------
+	// use reverse mode for back prop
+	//-------------------------------
+
+	OffsetCalc_permutaion ofs(strides_dst, strides_src, permutations, ndims, reverse);
+
+	int threads_required = static_cast<int>(numels);
+
+	int warps_required = (threads_required + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
+	int warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
+	int num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
 
 
-	gpu_permute_kernel << < 5, 128 >> > (dst, src, numels, ofs );
+	int threads_per_block = CUDA_WARP_SIZE * warps_per_block;
+
+	gpu_permute_kernel << < num_blocks, threads_per_block >> > (dst, src, numels, ofs);
+
+	
 }
+//-----------------------------------------------------------------------------------------------------
 
 
+//-----------------------------------------------------------------------------------------------------
+//
+// helper functions for cublasSgemmBatched
+//
+//-----------------------------------------------------------------------------------------------------
 template<typename Dtype>
 __global__ void set_addresses_kernel(Dtype* base_addr_a, Dtype* base_addr_b, Dtype* base_addr_c, Dtype** addresses_a, Dtype** addresses_b, Dtype** addresses_c, const uint32_t* offsets_a, const uint32_t* offsets_b, const uint32_t* offsets_c, const uint64_t num_addresses)
 {
@@ -1134,7 +1337,7 @@ void set_addresses(Dtype* A, Dtype* B, Dtype* C, POINTER_ARRAYS* addresses, cons
 
 	set_addresses_kernel << < num_blocks, num_threads >> > (A, B, C, (Dtype**)addresses->a_array, (Dtype**)addresses->b_array, (Dtype**)addresses->c_array, offsets->a_array, offsets->b_array, offsets->c_array, num_addresses);
 }
-
+//-----------------------------------------------------------------------------------------------------
 
 template void gpu_mean<float>(float* dst, const float* src, const uint64_t numels);
 template void gpu_mean<int>(int* dst, const int* src, const uint64_t numels);
@@ -1172,10 +1375,16 @@ template void gpu_index<float>(float* dst, const float* src, const int* indices,
 template void gpu_index<int>(int* dst, const int* src, const int* indices, uint64_t copy_len, const uint64_t numels);
 template void gpu_index<uint8_t>(uint8_t* dst, const uint8_t* src, const int* indices, uint64_t copy_len, const uint64_t numels);
 
-template void gpu_permute<float>(float* dst, const float* src, int ndims, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutaions);
-template void gpu_permute<int>(int* dst, const int* src, int ndims, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutaions);
-template void gpu_permute<uint8_t>(uint8_t* dst, const uint8_t* src, int ndims, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutaions);
+template void gpu_permute<float>(float* dst, const float* src, int ndims, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutaions, bool reverse);
+template void gpu_permute<int>(int* dst, const int* src, int ndims, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutaions, bool reverse);
+template void gpu_permute<uint8_t>(uint8_t* dst, const uint8_t* src, int ndims, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutaions, bool reverse);
 
 template void set_addresses<float>(float* A, float* B, float* C, POINTER_ARRAYS* addresses, const OFFSET_ARRAYS* offsets, const uint64_t num_addresses);
 template void set_addresses<int>(int* A, int* B, int* C, POINTER_ARRAYS* addresses, const OFFSET_ARRAYS* offsets, const uint64_t num_addresses);
 template void set_addresses<uint8_t>(uint8_t* A, uint8_t* B, uint8_t* C, POINTER_ARRAYS* addresses, const OFFSET_ARRAYS* offsets, const uint64_t num_addresses);
+
+
+
+template void gpu_layer_norm_backwards<float>(void* vlayer_norm, float* x, float* top_gradient, float* bottom_gradient);
+template void gpu_layer_norm_backwards<int>(void* vlayer_norm, int* x, int* top_gradient, int* bottom_gradient);
+template void gpu_layer_norm_backwards<uint8_t>(void* vlayer_norm, uint8_t* x, uint8_t* top_gradient, uint8_t* bottom_gradient);

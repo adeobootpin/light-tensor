@@ -293,15 +293,27 @@ namespace lten {
 			delete children_lock_[i];
 		}
 
-		if (view_src_)
+		if (misc_tensor_)
 		{
 			int ref_count;
 
-			ref_count = view_src_->release();
+			ref_count = misc_tensor_->release();
 			if (ref_count == 0)
 			{
-				view_src_->release_resources();
-				delete view_src_;
+				misc_tensor_->release_resources();
+				delete misc_tensor_;
+			}
+		}
+
+		if (misc_int_tensor_)
+		{
+			int ref_count;
+
+			ref_count = misc_int_tensor_->release();
+			if (ref_count == 0)
+			{
+				misc_int_tensor_->release_resources();
+				delete misc_int_tensor_;
 			}
 		}
 
@@ -1888,7 +1900,7 @@ namespace lten {
 		LTEN_ERR_CHECK(allocate_from_buffer(dims, index, operand1.get_data_ptr(), false, &options));
 		operand1.add_ref();
 
-		view_src_ = &operand1;
+		misc_tensor_ = &operand1;
 
 		if (operand1.autograd_on())
 		{
@@ -1942,7 +1954,7 @@ namespace lten {
 		LTEN_ERR_CHECK(allocate_from_buffer(dims, ndims + 1, operand1.get_data_ptr(), false, &options));
 		operand1.add_ref();
 
-		view_src_ = &operand1;
+		misc_tensor_ = &operand1;
 
 
 		if (operand1.autograd_on())
@@ -2022,7 +2034,7 @@ namespace lten {
 
 
 		operand1.add_ref();
-		view_src_ = &operand1;
+		misc_tensor_ = &operand1;
 
 		if (operand1.autograd_on())
 		{
@@ -2397,6 +2409,16 @@ namespace lten {
 			}
 		}
 
+		if (operand1.autograd_on())
+		{
+			dims[0] = npermutations;
+			misc_int_tensor_ = new TensorImpl<int>;
+			misc_int_tensor_->allocate(dims, 1);
+			memcpy(misc_int_tensor_->get_data_ptr(), permutations, sizeof(uint32_t) * npermutations);
+			add_child(operand1);
+			grad_fn_ = ::permute_backward;
+			set_autograd(true);
+		}
 
 	}
 

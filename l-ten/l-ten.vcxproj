@@ -182,6 +182,7 @@
     <ClInclude Include="md_array_cuda.h" />
     <ClInclude Include="memorypool.h" />
     <ClInclude Include="net.h" />
+    <ClInclude Include="offset_calc.h" />
     <ClInclude Include="optimizer.h" />
     <ClInclude Include="shared_pointer.h" />
     <ClInclude Include="tensor.h" />
@@ -195,9 +196,11 @@
     <ClCompile Include="batchnorm.cpp" />
     <ClCompile Include="conv2d.cpp" />
     <ClCompile Include="dropout.cpp" />
+    <ClCompile Include="embedding.cpp" />
     <ClCompile Include="fully_connected.cpp" />
     <ClCompile Include="globals.cpp" />
     <ClCompile Include="gru.cpp" />
+    <ClCompile Include="layernorm.cpp" />
     <ClCompile Include="layers.cpp" />
     <ClCompile Include="math_fns.cpp" />
     <ClCompile Include="optimizer.cpp" />

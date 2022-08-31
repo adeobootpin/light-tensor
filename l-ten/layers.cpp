@@ -291,18 +291,48 @@ namespace lten {
 		cublasStatus_t status;
 		cublasHandle_t hCuBlas;
 		int ndims;
+		int ndims_b;
 		int numels;
 		int num_batches;
 		uint64_t result_dims[MAX_DIMS];
+		uint64_t B_dims_original[MAX_DIMS];
+		uint64_t B_dims_temp[MAX_DIMS];
 		bool broadcast_required;
 		int i;
 		MultiDimArray<float>* A_md_array;
+		MultiDimArray<float>* B_md_array;
+		int temp;
 
 
 		ndims = A.get_ndims();
 		numels = A.get_numels();
+		ndims_b = B.get_ndims();
 
 		A_md_array = A.get_mdarray<float>();
+		B_md_array = B.get_mdarray<float>();
+
+		memcpy(B_dims_original, B_md_array->GetSizes(), ndims_b * sizeof(uint64_t));
+		
+		
+		// unsqueeze and 'transpose'
+		// no need for a real transpose since blas will do that implicitly but need to get
+		// the strides right (Allocate will do that below)
+		for (i = 0; i < ndims; i++)
+		{
+			if (ndims - ndims_b > i)
+			{
+				B_dims_temp[i] = 1;
+			}
+			else
+			{
+				B_dims_temp[i] = B_dims_original[i - (ndims - ndims_b)];
+			}
+		}
+		temp = B_dims_temp[ndims - 1];
+		B_dims_temp[ndims - 1] = B_dims_temp[ndims - 2];
+		B_dims_temp[ndims - 2] = temp;
+		B_md_array->Allocate(B_dims_temp, ndims, (float*)B.get_data_ptr(), false); // this will set the stride to what is expected
+
 
 		broadcast_required = A_md_array->check_broadcast_required(B.get_sizes(), result_dims, true);
 
@@ -369,7 +399,7 @@ namespace lten {
 		ndims_ = ndims;
 		numels_ = numels;
 
-		hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(0);
+		hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(options.device_index);
 
 		float alpha = 1.0f;
 		float beta = 0.0f;
@@ -395,6 +425,17 @@ namespace lten {
 			(float**)pa_.b_array, lda, (float**)pa_.a_array, ldb, &beta, (float**)pa_.c_array, ldc, num_batches);
 
 
+
+		if (is_training_ || static_cast<TensorImpl<float>*>(A.get_smart_ptr().get_real_object())->autograd_on() || static_cast<TensorImpl<float>*>(B.get_smart_ptr().get_real_object())->autograd_on())
+		{
+			resultImpl->add_child(*(static_cast<TensorImpl<float>*>(A.get_smart_ptr().get_real_object())));
+			resultImpl->add_child(*(static_cast<TensorImpl<float>*>(B.get_smart_ptr().get_real_object())));
+			resultImpl->set_grad_fn(pseudo_einsum1_backward);
+			resultImpl->set_autograd(true);
+		}
+
+		B_md_array->Allocate(B_dims_original, ndims_b, (float*)B.get_data_ptr(), false);
+
 		return Tensor(result);
 	}
 
@@ -404,21 +445,26 @@ namespace lten {
 		//----------------------------------------------------------------------
 		// hack implementation of torch::einsum("bythwc, wkc->bythwk", { A, B })
 		//----------------------------------------------------------------------
-		uint64_t result_dims[MAX_DIMS] = { 56, 2, 8, 56, 1, 1, 7 };
+		uint64_t result_dims[MAX_DIMS];
+		uint64_t scratch_dims[MAX_DIMS] = { 56, 2, 8, 56, 1, 1, 7 };
 		uint32_t permutation[MAX_DIMS] = { 1, 5, 2, 3, 0, 6, 4 };
 		TensorOps options;
+		TensorImpl<float> scratch;
 		TensorImpl<float>* resultImpl;
 		int ndims;
+		int i;
 
 		options.data_type = A.get_data_type();
 		options.device_index = A.get_device_index();
 		options.device_type = A.get_device();
 
-		ndims = 7;
-		resultImpl = new TensorImpl<float>;
-		intrusive_ptr<TensorImplBase> result(resultImpl);
-		resultImpl->allocate(result_dims, ndims, &options);
+		if (!scratch_buffer_)
+		{
+			AllocateMemoryOnGPU(&scratch_buffer_, sizeof(float) * 56 * 2 * 8 * 56 * 1 * 1 * 7, false);
+		}
 
+		ndims = 7;
+		scratch.allocate_from_buffer(scratch_dims, ndims, scratch_buffer_, false);
 
 		float alpha = 1.0f;
 		float beta = 0.0f;
@@ -430,9 +476,35 @@ namespace lten {
 		cublasStatus_t status;
 		cublasHandle_t hCuBlas;
 
-		hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(0);
+		hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(options.device_index);
 
-		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, 7, 896, 96, &alpha, (float*)B.get_data_ptr(), 96, 672, (float*)A.get_data_ptr(), 5376, 96, &beta, (float*)resultImpl->get_data_ptr(), 7, 6272, 56);
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, 7, 896, 96, &alpha, (float*)B.get_data_ptr(), 96, 672, (float*)A.get_data_ptr(), 5376, 96, &beta, (float*)scratch_buffer_, 7, 6272, 56);
+
+
+		//-----------------------------------------------------------------
+		// perform permutation
+		//-----------------------------------------------------------------
+		for (i = 0; i < ndims; i++)
+		{
+			result_dims[i] = scratch_dims[permutation[i]];
+		}
+
+		resultImpl = new TensorImpl<float>;
+		intrusive_ptr<TensorImplBase> result(resultImpl);
+		resultImpl->allocate(result_dims, ndims, &options);
+
+
+		gpu_permute((float*)resultImpl->get_data_ptr(), (float*)scratch_buffer_, ndims, resultImpl->get_numels(), resultImpl->get_strides(), scratch.get_strides(), permutation);
+
+
+
+		if (is_training_ || static_cast<TensorImpl<float>*>(A.get_smart_ptr().get_real_object())->autograd_on() || static_cast<TensorImpl<float>*>(B.get_smart_ptr().get_real_object())->autograd_on())
+		{
+			resultImpl->add_child(*(static_cast<TensorImpl<float>*>(A.get_smart_ptr().get_real_object())));
+			resultImpl->add_child(*(static_cast<TensorImpl<float>*>(B.get_smart_ptr().get_real_object())));
+			resultImpl->set_grad_fn(pseudo_einsum2_backward);
+			resultImpl->set_autograd(true);
+		}
 
 
 		return Tensor(result);

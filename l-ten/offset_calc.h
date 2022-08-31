@@ -852,7 +852,7 @@ struct OffsetCalc_repeat_interleave
 
 struct OffsetCalc_permutaion
 {
-	OffsetCalc_permutaion(const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutaions, int ndims)
+	OffsetCalc_permutaion(const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutaions, int ndims, bool reverse = false)
 	{
 		uint32_t divisor;
 		uint32_t shift;
@@ -879,14 +879,94 @@ struct OffsetCalc_permutaion
 
 			strides_dst_[i] = (uint32_t)strides_dst[i];
 
-			for (int j = 0; j < ndims; j++)
+			if (reverse)
 			{
-				if (i == permutaions[j])
+				permutaions_[i] = permutaions[i]; // use this for back prop
+			}
+			else
+			{
+				for (int j = 0; j < ndims; j++) // TODO: optimize this (currently an N^2 operation)
 				{
-					permutaions_[i] = j;
+					if (i == permutaions[j])
+					{
+						permutaions_[i] = j;
+					}
 				}
 			}
-			
+		
+		}
+
+		ndims_ = ndims;
+	}
+
+	LTEN_HOST_DEVICE uint32_t GetOffset(uint32_t index)
+	{
+		uint32_t offs;
+
+		int i;
+		uint32_t coordinate;
+
+		offs = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; ++i)
+		{
+			if (i == ndims_)
+			{
+				break;
+			}
+
+			coordinate = ((((uint64_t)index * div_[i].magic) >> 32) + index) >> div_[i].shift;
+			index = index - coordinate * div_[i].divisor;
+
+			offs += coordinate * strides_dst_[permutaions_[i]];
+		}
+
+		return offs;
+
+	}
+
+	Divider div_[MAX_DIMS];
+	uint32_t strides_dst_[MAX_DIMS];
+	uint32_t permutaions_[MAX_DIMS];
+	int ndims_;
+
+};
+
+
+struct OffsetCalc_permutaion2
+{
+	OffsetCalc_permutaion2(const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* permutaions, int ndims)
+	{
+		uint32_t divisor;
+		uint32_t shift;
+		int i;
+
+		for (i = 0; i < ndims; i++)
+		{
+			divisor = (uint32_t)strides_src[i];
+
+			for (shift = 0; shift < 32; shift++)
+			{
+				if ((1U << shift) >= divisor)
+				{
+					break;
+				}
+			}
+
+			uint64_t one = 1;
+			uint64_t magic = ((one << 32) * ((one << shift) - divisor)) / divisor + 1;
+
+			div_[i].magic = (uint32_t)magic;
+			div_[i].shift = shift;
+			div_[i].divisor = divisor;
+
+			strides_dst_[i] = (uint32_t)strides_dst[i];
+
+			permutaions_[i] = permutaions[i];
+
 		}
 
 		ndims_ = ndims;

@@ -349,7 +349,19 @@ namespace lten {
 				}
 				else
 				{
-					LTEN_ERR("No backpropagation function defined");
+					if (!misc_tensor_) // "pointer" to a view
+					{
+						LTEN_ERR("No backpropagation function defined"); // only view tensors can have no backpropagaton function (since top_gradient pass-through can be used to speed things up)
+					}
+
+					if (gradient_ptr_)
+					{
+						bottom_gradient = gradient_ptr_;
+					}
+					else
+					{
+						bottom_gradient = top_gradient_ptr;
+					}
 				}
 				children_[i]->do_backward(bottom_gradient);
 			}
@@ -4314,9 +4326,77 @@ void embedding_backwardxxx(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimAr
 
 }
 
-
 template<typename Dtype>
 void layernorm_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
+{
+	uint64_t N;
+	lten::LayerNorm* layer_norm;
+	int ndims;
+	bool broadcast_required;
+	lten::device device_type;
+	const uint64_t* dims_array_top;
+	const uint64_t* dims_array_wt;
+	const uint64_t* dims_array_bias;
+	const uint64_t* dims_array_btm;
+	const uint64_t* dims_array_op1;
+	MultiDimArray<Dtype>* operand1_md_array;
+	MultiDimArray<Dtype>* operand2_md_array;
+	lten::Tensor ln_grad;
+	lten::Tensor sd_grad;
+	lten::Tensor temp1_grad;
+	lten::Tensor mu_grad;
+	MultiDimArray<Dtype>* feeder_gradient_ptr;
+	int dim;
+	const uint64_t* dst_sizes;
+	const uint64_t* dst_strides;
+	uint64_t dim_size;
+	uint64_t ratio;
+	lten::TensorOps options;
+
+	layer_norm = static_cast<lten::LayerNorm*>(parent_ptr->misc_ptr1_);
+	assert(layer_norm);
+	assert(parent_ptr->get_ndims() > 1);
+
+	ndims = parent_ptr->get_ndims();
+
+	dims_array_top = top_gradient_ptr->GetSizes();
+
+	device_type = parent_ptr->get_device();
+
+
+	options.data_type = children_ptr_array[0]->get_data_type();
+	options.device_type = children_ptr_array[0]->get_device();
+	options.device_index = children_ptr_array[0]->get_device_index();
+
+
+	ln_grad = lten::AllocateTensor(dims_array_top, ndims, &options);
+
+	if (device_type == lten::CPU)
+	{
+
+	}
+	else
+	{
+		if (lten::GPU == device_type)
+		{
+#ifdef USE_CUDA
+			gpu_layer_norm_backwards((void*)layer_norm, (Dtype*)children_ptr_array[0]->get_data_ptr(), (Dtype*)top_gradient_ptr->GetDataPtr(), (Dtype*)bottom_gradient_ptr->GetDataPtr());
+
+#else
+			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+		}
+		else
+		{
+			LTEN_ERR("Invalid tesor data type");
+		}
+	}
+
+}
+
+
+template<typename Dtype>
+void layernorm_backwardxx(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
 	uint64_t N;
 	lten::LayerNorm* layer_norm;
@@ -4589,7 +4669,6 @@ void layernorm_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray
 
 
 		//std::cout << *bottom_gradient_ptr << "\n";
-
 	}
 	else
 	{
@@ -4962,6 +5041,169 @@ void pooling_cudnn_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimA
 }
 #endif
 
+template<typename Dtype>
+void permute_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
+{
+	lten::device device_type;
+	MultiDimArray<Dtype>* operand1_md_array;
+
+	operand1_md_array = children_ptr_array[0]->get_mdarray();
+
+	device_type = parent_ptr->get_device();
+
+
+	if (lten::CPU == device_type)
+	{
+		//cpu_copy(numels, top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr());
+	}
+	else
+	{
+		if (lten::GPU == device_type)
+		{
+#ifdef USE_CUDA
+			gpu_permute(bottom_gradient_ptr->GetDataPtr(), top_gradient_ptr->GetDataPtr(), top_gradient_ptr->GetNDims(), top_gradient_ptr->GetNumels(), bottom_gradient_ptr->GetStrides(), top_gradient_ptr->GetStrides(), (uint32_t*)parent_ptr->misc_int_tensor_->get_data_ptr(), true);
+#else
+			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+		}
+		else
+		{
+			LTEN_ERR("Invalid tensor device type");
+		}
+	}
+
+}
+
+template<typename Dtype>
+void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
+{
+	CUDA_MultiDimArray<Dtype> temp;
+	CUDA_MultiDimArray<Dtype>* child;
+
+	float* top_ptr = new float[1000];
+	float* b_ptr = new float[1000];
+	float* result = new float[650000];
+
+	if (child_index == 0)
+	{
+		uint64_t dims[MAX_DIMS] = { 1, 1, 1, 56, 7, 96 };
+		//uint64_t dims[MAX_DIMS] = { 1, 1, 1, 2, 3, 2 };
+		child = (CUDA_MultiDimArray<Dtype>*)(children_ptr_array[1]->get_mdarray());
+
+		child->Allocate(dims, 6, child->GetDataPtr(), false);
+
+		//temp = child->transpose(4, 5);
+
+		//CopyDataFromGPU(top_ptr, top_gradient_ptr->GetDataPtr(), sizeof(float) * top_gradient_ptr->GetNumels());
+		//CopyDataFromGPU(b_ptr, child->GetDataPtr(), sizeof(float) * child->GetNumels());
+
+		temp = ((CUDA_MultiDimArray<Dtype>*)top_gradient_ptr)->matmul(*child);
+		//temp = ((CUDA_MultiDimArray<Dtype>*)top_gradient_ptr)->matmul(temp);
+		GPUToGPUCopy(bottom_gradient_ptr->GetDataPtr(), temp.GetDataPtr(), sizeof(float) * bottom_gradient_ptr->GetNumels());
+
+		//CopyDataFromGPU(result, temp.GetDataPtr(), sizeof(float) * temp.GetNumels());
+
+		/*
+		uint64_t* dims;
+
+		dims = const_cast<uint64_t*>(children_ptr_array[child_index]->get_sizes());
+		dims[4] = 7;
+		dims[5] = 96;
+
+
+
+		child = (CUDA_MultiDimArray<Dtype>*)(children_ptr_array[child_index]->get_mdarray());
+		temp = ((CUDA_MultiDimArray<Dtype>*)top_gradient_ptr)->matmul(*child);
+		GPUToGPUCopy(bottom_gradient_ptr->GetDataPtr(), temp.GetDataPtr(), sizeof(float) * bottom_gradient_ptr->GetNumels());
+		*/
+	}
+	else
+	{
+		temp = ((CUDA_MultiDimArray<Dtype>*)top_gradient_ptr)->transpose(4, 5);
+		child = (CUDA_MultiDimArray<Dtype>*)(children_ptr_array[0]->get_mdarray());
+		temp = temp.matmul(*child);
+
+		CopyDataFromGPU(result, temp.GetDataPtr(), sizeof(float) * temp.GetNumels());
+
+		MultiDimArray<float> sum_matrix;
+		MultiDimArray<float> result_matrix;
+
+		sum_matrix.Allocate({ 392, 6272 });
+		result_matrix.Allocate({ 6272, 96}, result, false);
+		
+		float* sum_matrix_data = sum_matrix.GetDataPtr();
+		memset(sum_matrix_data, 0, sizeof(float) * sum_matrix.GetNumels());
+		for (int i = 0; i < 392; i++)
+		{
+			for (int j = i; j < 6272; j+= 392)
+			{
+				sum_matrix_data[i * 6272 + j] = 1.0f;
+			}
+		}
+
+		MultiDimArray<float> collapsed_matrix = sum_matrix.matmul(result_matrix);
+		CopyDataToGPU(bottom_gradient_ptr->GetDataPtr(), collapsed_matrix.GetDataPtr(), sizeof(float) * 56 * 7 * 96);
+
+		/*
+		for (int i = 0; i < 56; i++)
+		{
+			for (int j = 0; j < 7; j++)
+			{
+				for (int k = 0; k < 96; k++)
+				{
+					float sum = 0;
+
+					for (int a = 0; a < 2; a++)
+					{
+						for (int b = 0; b < 8; b++)
+						{
+							sum += result[a * (8 * 56 * 7 * 96) + b * (56 * 7 * 96 ) + i * (7 * 96) + j * 96 + k];
+						}
+						
+					}
+
+					result[i * (7 * 96) + j * 96 + k] = sum;
+				}
+			}
+		}
+		
+		CopyDataToGPU(bottom_gradient_ptr->GetDataPtr(), result,  sizeof(float) * 56 * 7 * 96);
+		*/
+	}
+
+}
+
+template<typename Dtype>
+void pseudo_einsum2_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
+{
+	CUDA_MultiDimArray<Dtype> temp;
+	CUDA_MultiDimArray<Dtype>* child;
+
+	float* top_ptr = new float[1000];
+	float* b_ptr = new float[1000];
+	float* result = new float[650000];
+
+	if (child_index == 0)
+	{
+		/*
+		uint64_t scratch_dims[MAX_DIMS] = { 56, 2, 8, 56, 1, 1, 7 };
+		TensorImpl<float> scratch;
+		void* scratch_buffer_;
+
+		AllocateMemoryOnGPU(&scratch_buffer_, sizeof(float) * 56 * 2 * 8 * 56 * 1 * 1 * 7, false);
+
+		ndims = 7;
+		scratch.allocate_from_buffer(scratch_dims, ndims, scratch_buffer_, false);
+
+		
+		gpu_permute((float*)resultImpl->get_data_ptr(), (float*)scratch_buffer_, ndims, resultImpl->get_numels(), resultImpl->get_strides(), scratch.get_strides(), permutation);
+		*/
+	}
+	else
+	{
+	}
+}
+
 template void matmul_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void sub_array_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void exp_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
@@ -4995,6 +5237,9 @@ template void var_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimAr
 template void std_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void layernorm_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void masked_fill_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
+template void permute_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
+template void pseudo_einsum1_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
+template void pseudo_einsum2_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 
 template void matmul_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void sub_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
@@ -5029,6 +5274,9 @@ template void var_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArra
 template void std_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void layernorm_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void masked_fill_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
+template void permute_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
+template void pseudo_einsum1_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
+template void pseudo_einsum2_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 
 template void matmul_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void sub_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
@@ -5063,6 +5311,9 @@ template void var_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDim
 template void std_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void layernorm_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void masked_fill_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
+template void permute_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
+template void pseudo_einsum1_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
+template void pseudo_einsum2_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 
 #ifdef USE_CUDA
 template void conv2_cudnn_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);

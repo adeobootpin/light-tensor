@@ -831,6 +831,7 @@ namespace lten {
 		Tensor* get_mu() { return &mu_; }
 		Tensor* get_sd() { return &sd_; }
 		Tensor* get_temp1() { return &temp1_; }
+		Tensor* get_feeder_gradient() { return &feeder_gradient_; }
 		void clear_gradients();
 		std::vector<Tensor*> get_all_weights();
 		void to(device target_device, int target_device_index = 0);
@@ -843,6 +844,7 @@ namespace lten {
 		Tensor eps_;
 		Tensor ln_;
 		Tensor sd_;
+		Tensor feeder_gradient_; // gradient flowing back from gamma if affine, ignored othersize (simply use top_gradient)
 		Tensor mu_;
 		Tensor temp1_;
 		Tensor temp2_;
@@ -1052,7 +1054,7 @@ namespace lten {
 	public:
 		Pseudo_Einsum_2()
 		{
-
+			scratch_buffer_ = nullptr;
 		}
 
 		~Pseudo_Einsum_2() {}
@@ -1064,6 +1066,7 @@ namespace lten {
 		void to(device target_device, int target_device_index) {}
 
 	private:
+		void* scratch_buffer_;
 
 	};
 

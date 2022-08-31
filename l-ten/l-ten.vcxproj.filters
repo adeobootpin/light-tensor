@@ -66,6 +66,9 @@
     <ClInclude Include="tensor_fns.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="offset_calc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="backprop.cpp">
@@ -111,6 +114,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="utils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="layernorm.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="embedding.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

@@ -515,11 +515,7 @@ public:
 				Dtype* lhs_data = GetDataPtr();
 				Dtype* rhs_data = other.GetDataPtr();
 
-				//status = cublasSgemm(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
-				//	(float*)rhs_data, lda, (float*)lhs_data, ldb, &beta, (float*)result_data, ldc);
-
-				lda = K;
-				status = cublasSgemm(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
+				status = cublasSgemm(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
 					(float*)rhs_data, lda, (float*)lhs_data, ldb, &beta, (float*)result_data, ldc);
 			}
 			else
@@ -582,11 +578,7 @@ public:
 
 				pointer_array = &pa_gpu;
 
-				//status = cublasSgemmBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
-				//	(float**)pointer_array->b_array, lda, (float**)pointer_array->a_array, ldb, &beta, (float**)pointer_array->c_array, ldc, num_batches);
-
-				lda = K;
-				status = cublasSgemmBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
+				status = cublasSgemmBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
 					(float**)pointer_array->b_array, lda, (float**)pointer_array->a_array, ldb, &beta, (float**)pointer_array->c_array, ldc, num_batches);
 
 				delete pa_cpu.buffer;

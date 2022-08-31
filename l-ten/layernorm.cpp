@@ -112,16 +112,37 @@ namespace lten {
 		}
 
 
+		mu_ = AllocateTensor(dims_src, ndims_src - 1, &options);
 		sd_ = AllocateTensor(dims_src, ndims_src - 1, &options);
 		ln_ = AllocateTensor(dims_src, ndims_src, &options);
+		feeder_gradient_ = AllocateTensor(dims_src, ndims_src, &options);
 		LTEN_ERR_CHECK(resultImpl->allocate(dims_src, ndims_src, &options));
 
 
 		if (CPU == options.device_type)
 		{
-			assert(0); // TODO implement cpu version (previous version below)
-			LTEN_ERR("LayerNorm: Not yet implemented: mean for cpu");
-			/*
+			// TODO implement cpu version using faster Welford's online algorithm
+
+			uint64_t dim_size;
+			uint64_t ratio;
+			const uint64_t* src_sizes;
+			const uint64_t* src_strides;
+			int axis;
+			int ndims;
+			const uint64_t* dims;
+
+			ndims = input.get_ndims();
+
+			dims = input.get_sizes();
+
+			src_strides = input.get_strides();
+			src_sizes = input.get_sizes();
+
+			axis = input.get_ndims() - 1;
+
+			dim_size = src_sizes[axis];
+			ratio = src_strides[axis - 1] / src_strides[axis];
+
 			cpu_mean((float*)input.get_data_ptr(), (float*)mu_.get_data_ptr(), mu_.get_numels(), ratio, dim_size, src_strides[axis]);
 			cpu_std((float*)input.get_data_ptr(), (float*)sd_.get_data_ptr(), sd_.get_numels(), ratio, dim_size, src_strides[axis], false);
 
@@ -144,7 +165,6 @@ namespace lten {
 				ln_.get_mdarray<float>()->SetMemoryOwnership(false);
 				resultImpl->allocate_from_buffer(dims, ndims, ln_.get_data_ptr(), true, &options);
 			}
-			*/
 		}
 		else
 		{
@@ -186,7 +206,7 @@ namespace lten {
 
 
 		return Tensor(result);
-			}
+	}
 
 	void LayerNorm::clear_gradients()
 	{

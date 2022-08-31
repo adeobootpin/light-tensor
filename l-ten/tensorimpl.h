@@ -214,7 +214,8 @@ namespace lten {
 		void* misc_ptr2_; // can be used to store anything that requires more than an int
 		bool own_misc_ptr1_; // pointer onwnership 
 		bool own_misc_ptr2_;
-		TensorImpl* view_src_;
+		TensorImpl* misc_tensor_; // store anything (of type Dtype) that is best kept in tensor form
+		TensorImpl<int>* misc_int_tensor_; // store anything (of type int) that is best kept in tensor form
 		int graph_ref_count_;
 
 	private:
@@ -252,7 +253,8 @@ namespace lten {
 			misc_ptr2_ = nullptr;
 			own_misc_ptr1_ = false;
 			own_misc_ptr2_ = false;
-			view_src_ = nullptr;
+			misc_tensor_ = nullptr;
+			misc_int_tensor_ = nullptr;
 		}
 
 	};
@@ -339,6 +341,10 @@ template<typename Dtype>
 void layernorm_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
 template<typename Dtype>
 void masked_fill_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
-
-
+template<typename Dtype>
+void permute_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
+template<typename Dtype>
+void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
+template<typename Dtype>
+void pseudo_einsum2_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr);
 #endif // TENSORIMPL_H
