@@ -1041,12 +1041,17 @@ namespace lten {
 		void clear_gradients() {}
 		std::vector<Tensor*> get_all_weights() { std::vector<Tensor*> dud; return dud; }
 		void to(device target_device, int target_device_index) {}
+		POINTER_ARRAYS* get_pa_backwards() { return &pa_backwards_; }
+		OFFSET_ARRAYS* get_oa_backwards() { return &oa_backwards_; }
 
 	private:
 		int ndims_;
 		uint64_t numels_;
 		POINTER_ARRAYS pa_;
 		OFFSET_ARRAYS oa_;
+
+		POINTER_ARRAYS pa_backwards_;
+		OFFSET_ARRAYS oa_backwards_;
 	};
 
 	class Pseudo_Einsum_2 : public Module

@@ -284,7 +284,7 @@ namespace lten {
 	{
 		//----------------------------------------------------------------------
 		// hack implementation of torch::einsum("bythwc, hkc->bythwk", { A, B })
-		// -this just A.matmul(B.transpose())
+		// -this is just A.matmul(B.transpose())
 		//----------------------------------------------------------------------
 		TensorOps options;
 		TensorImpl<float>* resultImpl;
@@ -369,7 +369,6 @@ namespace lten {
 			oa_cpu.b_array = (uint32_t*)oa_cpu.buffer + num_batches;
 			oa_cpu.c_array = (uint32_t*)oa_cpu.buffer + 2 * num_batches;
 
-			MultiDimArray<float>* B_md_array = B.get_mdarray<float>();
 			MultiDimArray<float>* C_md_array = resultImpl->get_mdarray();
 
 			float* A_base = (float*)A.get_data_ptr();
@@ -392,6 +391,71 @@ namespace lten {
 			}
 			
 			CopyDataToGPU(oa_.buffer, oa_cpu.buffer, 3 * sizeof(uint32_t) * num_batches);
+
+
+			//
+			// now set up for backward processing if required
+			//
+			if (is_training_ || static_cast<TensorImpl<float>*>(A.get_smart_ptr().get_real_object())->autograd_on() ) // only A.grad requires this
+			{
+				FreeMemoryOnGPU(pa_backwards_.buffer);
+				FreeMemoryOnGPU(oa_backwards_.buffer);
+
+				OFFSET_ARRAYS oa_backwards_cpu;
+
+				// 'de-transpose' but keep unsqueezed form (this is what backward processing needs, i.e. unsqeezed original dims)
+				temp = B_dims_temp[ndims - 1];
+				B_dims_temp[ndims - 1] = B_dims_temp[ndims - 2];
+				B_dims_temp[ndims - 2] = temp;
+				B_md_array->Allocate(B_dims_temp, ndims, (float*)B.get_data_ptr(), false); // this will set the stride to what is expected
+
+
+
+				num_batches = A.get_numels() / (A.get_sizes()[ndims - 1] * A.get_sizes()[ndims - 2]);
+
+				AllocateMemoryOnGPU(&pa_backwards_.buffer, 3 * sizeof(float*) * num_batches, false);
+				pa_backwards_.a_array = (void**)pa_backwards_.buffer;
+				pa_backwards_.b_array = (void**)pa_backwards_.buffer + num_batches;
+				pa_backwards_.c_array = (void**)pa_backwards_.buffer + 2 * num_batches;
+
+
+				AllocateMemoryOnGPU(&oa_backwards_.buffer, 3 * sizeof(uint32_t*) * num_batches, false);
+				oa_backwards_.a_array = (uint32_t*)oa_backwards_.buffer;
+				oa_backwards_.b_array = (uint32_t*)oa_backwards_.buffer + num_batches;
+				oa_backwards_.c_array = (uint32_t*)oa_backwards_.buffer + 2 * num_batches;
+
+				oa_backwards_cpu.buffer = new uint32_t[3 * num_batches];
+				oa_backwards_cpu.a_array = (uint32_t*)oa_backwards_cpu.buffer;
+				oa_backwards_cpu.b_array = (uint32_t*)oa_backwards_cpu.buffer + num_batches;
+				oa_backwards_cpu.c_array = (uint32_t*)oa_backwards_cpu.buffer + 2 * num_batches;
+
+
+				//
+				// backward processing is like A = C * B ( A_gradient = top_gradient * B )
+				//
+				MultiDimArray<float>* top_gradient_md_array = resultImpl->get_mdarray();
+				
+				float* tg_base = (float*)result->get_data_ptr();
+				float* B_base = (float*)B.get_data_ptr();
+				float* A_base = (float*)A.get_data_ptr();
+
+				int index = 0;
+				md_array_dim_iterator it(A.get_sizes(), ndims - 2);
+				for (auto higher_indices : it)
+				{
+					float* A_grad_data = A_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
+					float* lhs_data = top_gradient_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
+					float* rhs_data = B_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
+
+					oa_cpu.a_array[index] = lhs_data - tg_base;
+					oa_cpu.b_array[index] = rhs_data - B_base;
+					oa_cpu.c_array[index] = A_grad_data - A_base;
+
+					index++;
+				}
+
+				CopyDataToGPU(oa_backwards_.buffer, oa_cpu.buffer, 3 * sizeof(uint32_t) * num_batches);
+			}
 		}
 
 		set_addresses((float*)A.get_data_ptr(), (float*)B.get_data_ptr(), (float*)resultImpl->get_data_ptr(), &pa_, &oa_, num_batches);
@@ -428,6 +492,7 @@ namespace lten {
 
 		if (is_training_ || static_cast<TensorImpl<float>*>(A.get_smart_ptr().get_real_object())->autograd_on() || static_cast<TensorImpl<float>*>(B.get_smart_ptr().get_real_object())->autograd_on())
 		{
+			resultImpl->misc_ptr1_ = this;
 			resultImpl->add_child(*(static_cast<TensorImpl<float>*>(A.get_smart_ptr().get_real_object())));
 			resultImpl->add_child(*(static_cast<TensorImpl<float>*>(B.get_smart_ptr().get_real_object())));
 			resultImpl->set_grad_fn(pseudo_einsum1_backward);
@@ -496,6 +561,12 @@ namespace lten {
 
 		gpu_permute((float*)resultImpl->get_data_ptr(), (float*)scratch_buffer_, ndims, resultImpl->get_numels(), resultImpl->get_strides(), scratch.get_strides(), permutation);
 
+
+		//
+		//HACKHACK we know last dim is 1 so get rid of it
+		//
+		resultImpl->get_mdarray()->SetMemoryOwnership(false); // prevent deletion of data pointer during following call to allocate_from_buffer
+		resultImpl->allocate_from_buffer(result_dims, ndims - 1, resultImpl->get_data_ptr(), true, &options); 
 
 
 		if (is_training_ || static_cast<TensorImpl<float>*>(A.get_smart_ptr().get_real_object())->autograd_on() || static_cast<TensorImpl<float>*>(B.get_smart_ptr().get_real_object())->autograd_on())
