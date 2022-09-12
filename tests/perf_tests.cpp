@@ -673,3 +673,74 @@ void transpose_backwards_test()
 	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
 	printf("lten::transpose backwards [duration: %f sec]\n", nseconds);
 }
+
+
+void einsum_fwd_bwd_test()
+{
+	class Net : public lten::NeuralNetwork
+	{
+	public:
+		Net()
+		{
+		}
+
+		lten::Tensor forward(lten::Tensor A, lten::Tensor B)
+		{
+			return pe_.forward(A, B);
+		}
+
+	private:
+		lten::Pseudo_Einsum_1 pe_;
+	};
+
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+	int i;
+
+	Net net;
+	net.train(true);
+	
+	lten::AdamOptimizer optimizer;
+	optimizer.set_learning_rate(5 * 1e-2);
+	optimizer.attach_network(net);
+
+	net.to(lten::GPU);
+	
+
+	lten::Tensor A;
+	lten::Tensor B;
+	lten::Tensor C;
+	lten::Tensor top_gradient;
+
+	A = lten::RandomTensor({ 2, 1, 8, 56, 56, 96 });
+	B = lten::RandomTensor({ 56, 7, 96 });
+
+	A = A.to(lten::GPU);
+	B = B.to(lten::GPU);
+
+
+	top_gradient = lten::RandomTensor({ 2, 1, 8, 56, 56, 7 });
+	top_gradient = top_gradient.to(lten::GPU);
+
+	for (i = 0; i < 5; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+
+		C = net.forward(A, B);
+		C.backward(top_gradient.get_mdarray<float>());
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten::einsum_fwd_bwd_test [duration: %f sec]\n", nseconds);
+
+}

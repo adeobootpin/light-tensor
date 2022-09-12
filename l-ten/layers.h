@@ -27,7 +27,7 @@ namespace lten {
 		virtual void set_qparams_out(QuantizationParams qparams_out) {}
 		virtual void set_qparams_params(QuantizationParams* qparams, int count) {}
 	protected:
-		bool is_training_ = true;
+		bool is_training_ = false;
 	};
 
 
@@ -1027,11 +1027,11 @@ namespace lten {
 	public:
 		Pseudo_Einsum_1()
 		{
-			pa_.buffer = nullptr;
-			oa_.buffer = nullptr;
-
-			ndims_ = 0;
-			numels_ = 0;
+			permuted_a_buffer_ = nullptr;
+			scratch_c_buffer_ = nullptr;
+			scratch_a_buffer_ = nullptr;
+			numels_a_ = 0;
+			numels_c_ = 0;
 		}
 
 		~Pseudo_Einsum_1() {}
@@ -1041,17 +1041,17 @@ namespace lten {
 		void clear_gradients() {}
 		std::vector<Tensor*> get_all_weights() { std::vector<Tensor*> dud; return dud; }
 		void to(device target_device, int target_device_index) {}
-		POINTER_ARRAYS* get_pa_backwards() { return &pa_backwards_; }
-		OFFSET_ARRAYS* get_oa_backwards() { return &oa_backwards_; }
+
+		void* get_permuted_a_buffer() { return permuted_a_buffer_; }
+		void* get_scratch_a_buffer() { return scratch_a_buffer_; }
+		void* get_scratch_c_buffer() { return scratch_c_buffer_; }
 
 	private:
-		int ndims_;
-		uint64_t numels_;
-		POINTER_ARRAYS pa_;
-		OFFSET_ARRAYS oa_;
-
-		POINTER_ARRAYS pa_backwards_;
-		OFFSET_ARRAYS oa_backwards_;
+		void* permuted_a_buffer_;
+		void* scratch_a_buffer_;
+		void* scratch_c_buffer_;
+		uint64_t numels_a_;
+		uint64_t numels_c_;
 	};
 
 	class Pseudo_Einsum_2 : public Module
@@ -1060,6 +1060,7 @@ namespace lten {
 		Pseudo_Einsum_2()
 		{
 			scratch_buffer_ = nullptr;
+			scratch_buffer_size_ = 0;
 		}
 
 		~Pseudo_Einsum_2() {}
@@ -1069,9 +1070,11 @@ namespace lten {
 		void clear_gradients() {}
 		std::vector<Tensor*> get_all_weights() { std::vector<Tensor*> dud; return dud; }
 		void to(device target_device, int target_device_index) {}
+		void* get_scratch_buffer() { return scratch_buffer_; }
 
 	private:
 		void* scratch_buffer_;
+		uint64_t scratch_buffer_size_;
 
 	};
 

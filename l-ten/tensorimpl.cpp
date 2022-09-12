@@ -2396,7 +2396,6 @@ namespace lten {
 			if (options.device_type == GPU)
 			{
 #ifdef USE_CUDA
-
 				gpu_permute((Dtype*)get_data_ptr(), (Dtype*)operand1.get_data_ptr(), ndims, operand1.get_numels(), get_strides(), operand1.get_strides(), permutations);
 
 #else

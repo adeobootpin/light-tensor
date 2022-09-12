@@ -1259,6 +1259,48 @@ void gpu_index(Dtype* dst, const Dtype* src, const int* indices, uint64_t copy_l
 //
 //-----------------------------------------------------------------------------------------------------
 template<typename Dtype>
+__global__ void gpu_permute_vectorized_kernel(Dtype* dst, const Dtype* src, const uint64_t N, OffsetCalc_permutaion ofs)
+{
+	uint32_t thread_id;
+	uint32_t i;
+	uint32_t j;
+	uint32_t grid_stride;
+	float4 val4;
+	uint32_t src_offset;
+	uint32_t dst_offset;
+	uint32_t remainder;
+
+	thread_id = blockIdx.x * blockDim.x + threadIdx.x; // global index;
+	grid_stride = blockDim.x * gridDim.x;
+
+	for (i = thread_id; i < N / vec_size; i += grid_stride)
+	{
+		src_offset = i * vec_size;
+
+		val4 = *(reinterpret_cast<const float4*>(&src[src_offset]));
+#pragma unroll
+		for (j = 0; j < vec_size; j++)
+		{
+			dst_offset = ofs.GetOffset(src_offset);
+			dst[dst_offset] = ((float*)&val4)[j];
+			src_offset++;
+		}
+	}
+
+	remainder = N % vec_size;
+	if ((thread_id == 0) && remainder)
+	{
+		src_offset = N - remainder;
+		for (j = 0; j < remainder; j++)
+		{
+			dst_offset = ofs.GetOffset(src_offset);
+			dst[dst_offset] = src[src_offset];
+			src_offset++;
+		}
+	}
+}
+
+template<typename Dtype>
 __global__ void gpu_permute_kernel(Dtype* dst, const Dtype* src, const uint64_t N, OffsetCalc_permutaion ofs)
 {
 	uint32_t thread_id;
@@ -1287,7 +1329,8 @@ void gpu_permute(Dtype* dst, const Dtype* src, int ndims, const uint64_t numels,
 
 	OffsetCalc_permutaion ofs(strides_dst, strides_src, permutations, ndims, reverse);
 
-	int threads_required = static_cast<int>(numels);
+	int threads_required = static_cast<int>((numels + vec_size - 1)/ vec_size);
+	//int threads_required = static_cast<int>(numels);
 
 	int warps_required = (threads_required + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
 	int warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
@@ -1296,11 +1339,19 @@ void gpu_permute(Dtype* dst, const Dtype* src, int ndims, const uint64_t numels,
 
 	int threads_per_block = CUDA_WARP_SIZE * warps_per_block;
 
-	gpu_permute_kernel << < num_blocks, threads_per_block >> > (dst, src, numels, ofs);
-
+	//gpu_permute_kernel << < num_blocks, threads_per_block >> > (dst, src, numels, ofs);
+	gpu_permute_vectorized_kernel << < num_blocks, threads_per_block >> > (dst, src, numels, ofs);
 	
 }
+
 //-----------------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
 
 
 //-----------------------------------------------------------------------------------------------------

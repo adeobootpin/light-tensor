@@ -160,6 +160,42 @@ void GetMaxDims(uint64_t* dims_1, uint64_t* dims_2, uint64_t* dims_max, int ndim
 	}
 }
 
+void GetPermutationStridesAndeDims(const uint64_t* src_dims, uint64_t* dst_dims, uint64_t* dst_strides, const uint32_t* permutations, int ndims)
+{
+	int i;
+	uint64_t numels;
+	uint64_t dst_dims_[MAX_DIMS];
+	uint64_t dst_strides_[MAX_DIMS];
+
+	if (!dst_dims)
+	{
+		dst_dims = dst_dims_;
+	}
+	if (!dst_strides)
+	{
+		dst_strides = dst_strides_;
+	}
+
+	//
+	// generate dst dims
+	//
+	for (i = 0; i < ndims; i++)
+	{
+		dst_dims[i] = src_dims[permutations[i]];
+	}
+
+	//
+	// generate dst strides
+	//
+	numels = 1;
+	for (i = ndims - 1; i >= 0; i--)
+	{
+		dst_strides[i] = numels;
+		numels *= dst_dims[i];
+	}
+
+}
+
 
 void CoordinatesFromIndex(uint64_t index, const uint64_t* dims, const uint64_t* strides, uint64_t* coordinates, int ndims)
 {

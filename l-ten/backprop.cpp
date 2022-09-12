@@ -5077,11 +5077,20 @@ void permute_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<D
 template<typename Dtype>
 void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
+	lten::Pseudo_Einsum_1* pe;
+	void* permuted_a_buffer;
+	void* scratch_a_buffer;
+	void* scratch_c_buffer;
+	uint64_t dst_strides[MAX_DIMS];
+	int ndims;
+	int i;
+
 	int device_index;
 	lten::device device_type;
 	cublasStatus_t status;
 	cublasHandle_t hCuBlas;
 
+	pe = static_cast<lten::Pseudo_Einsum_1*>(parent_ptr->misc_ptr1_);
 
 	device_type = parent_ptr->get_device();
 	device_index = parent_ptr->get_device_index();
@@ -5111,54 +5120,30 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 		//-------------------------------------------------------------------------------
 		// hack implementation of torch::einsum("bythwc, hkc->bythwk", { A, B }) backward
 		// -this is just top_gradient.matmul(B)
-		//-------------------------------------------------------------------------------
-		lten::Pseudo_Einsum_1* pe;
-		const uint64_t* result_dims;
-		POINTER_ARRAYS* pa_backwards_;
-		OFFSET_ARRAYS* oa_backwards_;
+		// however, permutations are required to use cublasSgemmStridedBatched
+		//-------------------------------------------------------------------------------	
+		uint32_t tg_permutations[] = { 3, 0, 1, 2, 4, 5 }; // top gradient permutation
+		uint32_t bg_permutations[] = { 1, 2, 3, 0, 4, 5 }; // bottom gradient permutation
+
+		//
+		// permute top gradient
+		//
+		ndims = top_gradient_ptr->GetNDims();
+		scratch_c_buffer = pe->get_scratch_c_buffer(); // use scratch_c_buffer since same size as top gradient
+		GetPermutationStridesAndeDims(top_gradient_ptr->GetSizes(), nullptr, dst_strides, tg_permutations, ndims);
+		gpu_permute((Dtype*)scratch_c_buffer, top_gradient_ptr->GetDataPtr(), ndims, top_gradient_ptr->GetNumels(), dst_strides, top_gradient_ptr->GetStrides(), tg_permutations);
 
 
-		pe = static_cast<lten::Pseudo_Einsum_1*>(parent_ptr->misc_ptr1_);
-		pa_backwards_ = pe->get_pa_backwards();
-		oa_backwards_ = pe->get_oa_backwards();
+		scratch_a_buffer = pe->get_scratch_a_buffer(); // use scratch_a_buffer since same size as A gradient
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, 96, 896, 7, &alpha, (float*)children_ptr_array[1]->get_mdarray()->GetDataPtr(), 96, 7 * 96, (float*)scratch_c_buffer, 7, 6272, &beta, (float*)scratch_a_buffer, 96, 86016, 56);
 
 
-		int ndims = bottom_gradient_ptr->GetNDims();
-		int num_batches;
-
-		result_dims = bottom_gradient_ptr->GetSizes();
-		num_batches = bottom_gradient_ptr->GetNumels() / (result_dims[ndims - 1] * result_dims[ndims - 2]);
-
-		set_addresses((float*)top_gradient_ptr->GetDataPtr(), (float*)children_ptr_array[1]->get_data_ptr(), (float*)bottom_gradient_ptr->GetDataPtr(), pa_backwards_, oa_backwards_, num_batches);
-		
-		M = result_dims[ndims - 2];
-		N = result_dims[ndims - 1];
-		K = top_gradient_ptr->GetSizes()[ndims - 1];
-
-		lda = static_cast<int>(N);
-		ldb = static_cast<int>(K);
-		ldc = static_cast<int>(N);
-
-		status = cublasSgemmBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
-			(float**)pa_backwards_->b_array, lda, (float**)pa_backwards_->a_array, ldb, &beta, (float**)pa_backwards_->c_array, ldc, num_batches);
-
-		/*
-		CUDA_MultiDimArray<Dtype> temp;
-		CUDA_MultiDimArray<Dtype>* child;
-
-		float* top_ptr = new float[1000];
-		float* b_ptr = new float[1000];
-		float* result = new float[650000];
-
-
-		uint64_t dims[MAX_DIMS] = { 1, 1, 1, 56, 7, 96 };
-		child = (CUDA_MultiDimArray<Dtype>*)(children_ptr_array[1]->get_mdarray());
-
-		child->Allocate(dims, 6, child->GetDataPtr(), false);
-
-		temp = ((CUDA_MultiDimArray<Dtype>*)top_gradient_ptr)->matmul(*child);
-		GPUToGPUCopy(bottom_gradient_ptr->GetDataPtr(), temp.GetDataPtr(), sizeof(float) * bottom_gradient_ptr->GetNumels());
-		*/
+		//
+		// permute bottom gradient
+		//
+		uint64_t src_strides[MAX_DIMS];
+		GetPermutationStridesAndeDims(children_ptr_array[0]->get_mdarray()->GetSizes(), nullptr, src_strides, tg_permutations, ndims);
+		gpu_permute(bottom_gradient_ptr->GetDataPtr(), (Dtype*)scratch_a_buffer, ndims, bottom_gradient_ptr->GetNumels(), bottom_gradient_ptr->GetStrides(), src_strides, bg_permutations);
 	}
 	else
 	{
@@ -5168,91 +5153,11 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 		// but implemented as top_gradient.permute(...).matmul(A) for speed
 		//--------------------------------------------------------------------------------
 
-		//------------------------------------------------------------------------------------------------------------------------------
-		lten::Tensor TG2;
-		lten::Tensor A2;
-		lten::Tensor G2;
+		void* permuted_a_buffer;
 
-		TG2 = lten::AllocateTensor({ 2, 1, 8, 56, 56, 7 });
-		A2 = lten::AllocateTensor({ 2, 1, 8, 56, 56, 96 });
-		CopyDataFromGPU(TG2.get_data_ptr(), top_gradient_ptr->GetDataPtr(), sizeof(float) * top_gradient_ptr->GetNumels());
-		CopyDataFromGPU(A2.get_data_ptr(), children_ptr_array[0]->get_data_ptr(), sizeof(float) * children_ptr_array[0]->get_numels());
-		//------------------------------------------------------------------------------------------------------------------------------
-
-		TG2 = TG2.transpose(3, 4);
-		TG2 = TG2.reshape({ 2 * 1 * 8 * 56, 56, 7 });
-		TG2 = TG2.transpose(0, 1);
-		TG2 = TG2.transpose(1, 2);
-
-
-		A2 = A2.transpose(3, 4);
-		A2 = A2.reshape({ 2 * 1 * 8 * 56, 56, 96 });
-		A2 = A2.transpose(0, 1);
-
-
-		G2 = TG2.matmul(A2);
-
-		CopyDataToGPU(bottom_gradient_ptr->GetDataPtr(), G2.get_data_ptr(), sizeof(float) * G2.get_numels());
-
-		/*
-		CUDA_MultiDimArray<Dtype> temp;
-		CUDA_MultiDimArray<Dtype>* child;
-
-		float* top_ptr = new float[1000];
-		float* b_ptr = new float[1000];
-		float* result = new float[650000];
-
-
- 		temp = ((CUDA_MultiDimArray<Dtype>*)top_gradient_ptr)->transpose(4, 5);
-		child = (CUDA_MultiDimArray<Dtype>*)(children_ptr_array[0]->get_mdarray());
-		temp = temp.matmul(*child);
-
-		CopyDataFromGPU(result, temp.GetDataPtr(), sizeof(float) * temp.GetNumels());
-
-		MultiDimArray<float> sum_matrix;
-		MultiDimArray<float> result_matrix;
-
-		sum_matrix.Allocate({ 392, 6272 });
-		result_matrix.Allocate({ 6272, 96}, result, false);
-		
-		float* sum_matrix_data = sum_matrix.GetDataPtr();
-		memset(sum_matrix_data, 0, sizeof(float) * sum_matrix.GetNumels());
-		for (int i = 0; i < 392; i++)
-		{
-			for (int j = i; j < 6272; j+= 392)
-			{
-				sum_matrix_data[i * 6272 + j] = 1.0f;
-			}
-		}
-
-		MultiDimArray<float> collapsed_matrix = sum_matrix.matmul(result_matrix);
-		CopyDataToGPU(bottom_gradient_ptr->GetDataPtr(), collapsed_matrix.GetDataPtr(), sizeof(float) * 56 * 7 * 96);
-		*/
-		/*
-		for (int i = 0; i < 56; i++)
-		{
-			for (int j = 0; j < 7; j++)
-			{
-				for (int k = 0; k < 96; k++)
-				{
-					float sum = 0;
-
-					for (int a = 0; a < 2; a++)
-					{
-						for (int b = 0; b < 8; b++)
-						{
-							sum += result[a * (8 * 56 * 7 * 96) + b * (56 * 7 * 96 ) + i * (7 * 96) + j * 96 + k];
-						}
-						
-					}
-
-					result[i * (7 * 96) + j * 96 + k] = sum;
-				}
-			}
-		}
-		
-		CopyDataToGPU(bottom_gradient_ptr->GetDataPtr(), result,  sizeof(float) * 56 * 7 * 96);
-		*/
+		permuted_a_buffer = pe->get_permuted_a_buffer();
+		scratch_c_buffer = pe->get_scratch_c_buffer(); // scratch_c_buffer should already have permuted top_gradient from A.backward
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_T, 96, 7, 896, &alpha, (float*)permuted_a_buffer, 96, 86016, (float*)scratch_c_buffer, 7, 6272, &beta, (float*)bottom_gradient_ptr->GetDataPtr(), 96, 672, 56);
 	}
 
 }
@@ -5260,44 +5165,43 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 template<typename Dtype>
 void pseudo_einsum2_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
+	lten::Pseudo_Einsum_2* pe;
 	int device_index;
 	lten::device device_type;
+	void* scratch_buffer;
+
+	float alpha = 1.0f;
+	float beta = 0.0f;
+
+	cublasStatus_t status;
+	cublasHandle_t hCuBlas;
 
 	device_type = parent_ptr->get_device();
 	device_index = parent_ptr->get_device_index();
 
+	pe = static_cast<lten::Pseudo_Einsum_2*>(parent_ptr->misc_ptr1_);
+	scratch_buffer = pe->get_scratch_buffer();
+
+	hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(0);
 
 	if (lten::CPU == device_type)
 	{
 		LTEN_ERR("pseudo_einsum1_backward not implemented for CPU");
 	}
 
-	lten::TensorOps options;
-	CUDA_MultiDimArray<Dtype> temp;
-	CUDA_MultiDimArray<Dtype>* child;
-	CUDA_MultiDimArray<Dtype> top_gradient_rev_permutation;
-	CUDA_MultiDimArray<Dtype> top_gradient_unsqueezed;
-	uint32_t permutation[MAX_DIMS] = { 1, 5, 2, 3, 0, 6, 4 };
-	uint64_t dims_top_gradient_unsqueezed[MAX_DIMS] = { 2, 1, 8, 56, 56, 1, 7 };
-	int i;
-	int ndims = 7;
-
 	if (child_index == 0)
 	{
+		//------------------------------------------------------------------------------------------------------------------------------
+
+		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, 96, 896, 7, &alpha, (float*)A2.get_data_ptr(), 96, 7 * 96, (float*)TG2.get_data_ptr(), 7, 6272, &beta, (float*)G2.get_data_ptr(), 96, 86016, 56);
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, 96, 896, 7, &alpha, (float*)children_ptr_array[1]->get_data_ptr(), 96, 7 * 96, (float*)top_gradient_ptr->GetDataPtr(), 392, 7, &beta, (float*)scratch_buffer, 96, 86016, 56); // looks like some funky addressing of top gradient tensor here
 		
-		uint64_t dims[MAX_DIMS] = { 1, 1, 1, 1, 56, 7, 96 };
-
-		child = (CUDA_MultiDimArray<Dtype>*)(children_ptr_array[1]->get_mdarray());
-		child->SetMemoryOwnership(false);
-		child->Allocate(dims, ndims, child->GetDataPtr(), false);
+		// output is { 56, 896, 96 }
+		uint64_t strides[MAX_DIMS] = { 96, 896 * 96, 1 }; // TODO: genrate this strange 'stride' array (see md_array_cuda.h)
+		uint64_t trasnposed_strides[MAX_DIMS] = { 5376, 96, 1}; //TODO: generate this dynamically
 
 
-		top_gradient_unsqueezed.Allocate(dims_top_gradient_unsqueezed, ndims, top_gradient_ptr->GetDataPtr(), false);
-
-		temp = top_gradient_unsqueezed.matmul(*child);
-
-		GPUToGPUCopy(bottom_gradient_ptr->GetDataPtr(), temp.GetDataPtr(), sizeof(float) * bottom_gradient_ptr->GetNumels());
-		
+		gpu_transpose((Dtype*)scratch_buffer, bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), strides, trasnposed_strides, 3); // TODO: invstigate why transpose(0, 1) is faster than permute({ 1, 2, 3, 4, 0, 5 }) 
 	}
 	else
 	{
@@ -5307,120 +5211,15 @@ void pseudo_einsum2_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 		// but implemented as top_gradient.permute(...).matmul(A) for speed
 		//--------------------------------------------------------------------------------
 
-		//------------------------------------------------------------------------------------------------------------------------------
-		lten::Tensor TG2;
-		lten::Tensor A2;
-		lten::Tensor G2;
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_T, 7, 96, 896, &alpha, (float*)top_gradient_ptr->GetDataPtr(), 392, 7, (float*)children_ptr_array[0]->get_data_ptr(), 5376, 96,
+			&beta, (float*)scratch_buffer, 7, 672, 56);
+		
 
-		TG2 = lten::AllocateTensor({ 2, 1, 8, 56, 56, 1, 7 });
-		A2 = lten::AllocateTensor({ 2, 1, 8, 56, 56, 1, 96 });
-		CopyDataFromGPU(TG2.get_data_ptr(), top_gradient_ptr->GetDataPtr(), sizeof(float) * top_gradient_ptr->GetNumels());
-		CopyDataFromGPU(A2.get_data_ptr(), children_ptr_array[0]->get_data_ptr(), sizeof(float) * children_ptr_array[0]->get_numels());
-		//------------------------------------------------------------------------------------------------------------------------------
+		// output is { 56, 96, 7 } i think
+		uint64_t strides[MAX_DIMS] = { 672, 1, 7 }; // TODO: genrate this strange 'stride' array (see md_array_cuda.h)
+		uint64_t trasnposed_strides[MAX_DIMS] = { 672, 96, 1 }; //TODO: generate this dynamically
 
-
-		TG2 = TG2.reshape({ 2 * 1 * 8 * 56, 56, 1, 7 });
-		A2 = A2.reshape({ 2 * 1 * 8 * 56, 56, 1, 96 });
-
-		TG2 = TG2.transpose(0, 1);
-		A2 = A2.transpose(0, 1);
-		TG2 = TG2.transpose(1, 3);
-
-		TG2 = TG2.reshape({ 56, 7, 896 });
-		A2 = A2.reshape({ 56, 896, 96 });
-
-		G2 = TG2.matmul(A2);
-
-		CopyDataToGPU(bottom_gradient_ptr->GetDataPtr(), G2.get_data_ptr(), sizeof(float) * G2.get_numels());
-
-		/*
-		uint64_t dims[MAX_DIMS] = { 2, 1, 8, 56, 56, 1, 96 };
-
-		child = (CUDA_MultiDimArray<Dtype>*)(children_ptr_array[0]->get_mdarray());
-		child->SetMemoryOwnership(false);
-		child->Allocate(dims, ndims, child->GetDataPtr(), false);
-
-
-		top_gradient_unsqueezed.Allocate(dims_top_gradient_unsqueezed, ndims, top_gradient_ptr->GetDataPtr(), false);
-
-		temp = top_gradient_unsqueezed.transpose(5, 6).matmul(*child);
-
-
-		options.device_index = 0;
-		options.device_type = lten::GPU;
-		options.data_type = lten::FLOAT32;
-
-
-		float* result = new float[2 * 8 * 56 * 56 * 7 * 96];
-		CopyDataFromGPU(result, temp.GetDataPtr(), sizeof(float) * temp.GetNumels());
-
-		for (int i = 0; i < 56; i++)
-		{
-			for (int j = 0; j < 7; j++)
-			{
-				for (int k = 0; k < 96; k++)
-				{
-					float sum = 0;
-
-					for (int a = 0; a < 2; a++)
-					{
-						for (int b = 0; b < 8; b++)
-						{
-							for (int c = 0; c < 56; c++)
-							{
-								sum += result[a * (8 * 56 * 56 * 7 * 96) + b * (56 * 56 * 7 * 96) +  c * ( 56 * 7 * 96 ) + i * (7 * 96) + j * 96 + k];
-							}			
-						}
-					}
-
-					result[i * (7 * 96) + j * 96 + k] = sum;
-				}
-			}
-		}
-
-		CopyDataToGPU(bottom_gradient_ptr->GetDataPtr(), result, sizeof(float) * 56 * 7 * 96);
-
-		//GPUToGPUCopy(bottom_gradient_ptr->GetDataPtr(), reducer.get_data_ptr(), sizeof(float) * bottom_gradient_ptr->GetNumels());
-		*/
-		/*
-		uint64_t dims[MAX_DIMS] = { 2, 1, 8, 56, 56, 1, 96 };
-
-		child = (CUDA_MultiDimArray<Dtype>*)(children_ptr_array[0]->get_mdarray());
-		child->Allocate(dims, ndims, child->GetDataPtr(), false);
-
-
-		top_gradient_unsqueezed.Allocate(dims_top_gradient_unsqueezed, ndims, top_gradient_ptr->GetDataPtr(), false);
-
-		temp = top_gradient_unsqueezed.transpose(5, 6).matmul(*child);
-
-		float* result = new float[650000];
-
-		CopyDataFromGPU(result, temp.GetDataPtr(), sizeof(float) * temp.GetNumels());
-
-		for (int i = 0; i < 56; i++)
-		{
-			for (int j = 0; j < 7; j++)
-			{
-				for (int k = 0; k < 96; k++)
-				{
-					float sum = 0;
-
-					for (int a = 0; a < 2; a++)
-					{
-						for (int b = 0; b < 8; b++)
-						{
-							sum += result[a * (8 * 56 * 7 * 96) + b * (56 * 7 * 96) + i * (7 * 96) + j * 96 + k];
-						}
-
-					}
-
-					result[i * (7 * 96) + j * 96 + k] = sum;
-				}
-			}
-		}
-
-		CopyDataToGPU(bottom_gradient_ptr->GetDataPtr(), result, sizeof(float) * 56 * 7 * 96);
-		*/
+		gpu_transpose((Dtype*)scratch_buffer, bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), strides, trasnposed_strides, 3);
 	}
 }
 
