@@ -334,7 +334,20 @@ void FillBuffer(Dtype* data_ptr, uint64_t len, Dtype value)
 	}
 }
 
-void GetStrides(int* dims, int* strides, int ndims)
+void GetStrides(const int* dims, int* strides, int ndims)
+{
+	int i;
+	int numels;
+
+	numels = 1;
+	for (i = ndims - 1; i >= 0; i--)
+	{
+		strides[i] = numels;
+		numels *= dims[i];
+	}
+}
+
+void GetStrides(const uint32_t* dims, uint32_t* strides, int ndims)
 {
 	int i;
 	uint32_t numels;
@@ -346,6 +359,20 @@ void GetStrides(int* dims, int* strides, int ndims)
 		numels *= dims[i];
 	}
 }
+
+void GetStrides(const uint64_t* dims, uint64_t* strides, int ndims)
+{
+	int i;
+	uint64_t numels;
+
+	numels = 1;
+	for (i = ndims - 1; i >= 0; i--)
+	{
+		strides[i] = numels;
+		numels *= dims[i];
+	}
+}
+
 
 uint32_t GetNextPowerOf2(int number)
 {

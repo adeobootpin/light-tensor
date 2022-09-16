@@ -1,7 +1,6 @@
 #ifndef OFFSET_CALC_H
 #define OFFSET_CALC_H
 
-
 #ifdef __NVCC__
 #define LTEN_HOST_DEVICE __host__ __device__
 #else
@@ -765,6 +764,185 @@ struct OffsetCalc_repeat
 	int ndims_;
 };
 
+//#include "utils.h"
+void ReshapeDims(const uint64_t* current_dims_ptr, int current_size, uint64_t* new_dims_ptr, int new_size);
+void GetStrides(const uint32_t* dims, uint32_t* strides, int ndims);
+void GetStrides(const uint64_t* dims, uint64_t* strides, int ndims);
+
+
+struct OffsetCalc_repeat_backwards
+{
+	OffsetCalc_repeat_backwards(const uint64_t* strides_dst, const uint64_t* strides_src, const uint64_t* dims_dst, int ndims_src, int ndims_dst, const uint32_t* repeats)
+	{
+		uint32_t divisor;
+		uint32_t shift;
+		int i;
+		uint64_t unsqeezed_dst_dims[MAX_DIMS];
+		uint32_t repeat_strides[MAX_DIMS];
+
+		ReshapeDims(dims_dst, ndims_dst, unsqeezed_dst_dims, ndims_src); // add leading 1's to source dims to equate length with result dims
+		GetStrides(repeats, repeat_strides, ndims_src);
+
+		//
+		// create 'coarse' strides array
+		//
+		coarse_strides_[ndims_src - 1] = unsqeezed_dst_dims[ndims_src - 1];
+		for (i = ndims_src - 2; i >= 0; i--)
+		{
+			coarse_strides_[i] = unsqeezed_dst_dims[i] * repeats[i + 1] * coarse_strides_[i + 1];
+		}
+
+		for (i = 0; i < ndims_dst; i++)
+		{
+			divisor = (uint32_t)strides_dst[i];
+
+			for (shift = 0; shift < 32; shift++)
+			{
+				if ((1U << shift) >= divisor)
+				{
+					break;
+				}
+			}
+
+			uint64_t one = 1;
+			uint64_t magic = ((one << 32) * ((one << shift) - divisor)) / divisor + 1;
+
+			div_dst_[i].magic = (uint32_t)magic;
+			div_dst_[i].shift = shift;
+			div_dst_[i].divisor = divisor;
+		}
+
+		for (i = 0; i < ndims_src; i++)
+		{
+			divisor = (uint32_t)repeat_strides[i];
+
+			for (shift = 0; shift < 32; shift++)
+			{
+				if ((1U << shift) >= divisor)
+				{
+					break;
+				}
+			}
+
+			uint64_t one = 1;
+			uint64_t magic = ((one << 32) * ((one << shift) - divisor)) / divisor + 1;
+
+			div_src_[i].magic = (uint32_t)magic;
+			div_src_[i].shift = shift;
+			div_src_[i].divisor = divisor;
+
+			strides_src_[i] = static_cast<uint32_t>(strides_src[i]);
+		}
+
+		ndims_src_ = ndims_src;
+		ndims_dst_ = ndims_dst;
+	}
+
+
+	LTEN_HOST_DEVICE uint32_t GetFineOffset(uint32_t fine_index)
+	{
+		uint32_t fine_offset;
+
+		int i;
+		uint32_t coordinate;
+
+		fine_offset = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; i++)
+		{
+			if (i == ndims_dst_)
+			{
+				break;
+			}
+			coordinate = ((((uint64_t)fine_index * div_dst_[i].magic) >> 32) + fine_index) >> div_dst_[i].shift;
+			fine_index = fine_index - coordinate * div_dst_[i].divisor;
+			fine_offset += coordinate * strides_src_[i + (ndims_src_ - ndims_dst_)];
+		}
+
+		return fine_offset;
+	}
+
+
+	LTEN_HOST_DEVICE uint32_t GetOffset2(uint32_t fine_offset, uint32_t coarse_index)
+	{
+		uint32_t coarse_offset;
+
+		int i;
+		uint32_t coordinate;
+		uint32_t mod;
+
+		coarse_offset = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; i++)
+		{
+			if (i == ndims_src_)
+			{
+				break;
+			}
+			coordinate = ((((uint64_t)coarse_index * div_src_[i].magic) >> 32) + coarse_index) >> div_src_[i].shift;
+			coarse_index = coarse_index - coordinate * div_src_[i].divisor;
+			coarse_offset += coordinate * coarse_strides_[i];
+		}
+		return coarse_offset + fine_offset;
+	}
+
+
+
+	LTEN_HOST_DEVICE uint32_t GetOffset(uint32_t fine_index, uint32_t coarse_index)
+	{
+		uint32_t fine_offset;
+		uint32_t coarse_offset;
+
+		int i;
+		uint32_t coordinate;
+
+		fine_offset = 0;
+		coarse_offset = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; i++)
+		{
+			if (i == ndims_dst_)
+			{
+				break;
+			}
+			coordinate = ((((uint64_t)fine_index * div_dst_[i].magic) >> 32) + fine_index) >> div_dst_[i].shift;
+			fine_index = fine_index - coordinate * div_dst_[i].divisor;
+			fine_offset += coordinate * strides_src_[i + (ndims_src_ - ndims_dst_)];
+		}
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; i++)
+		{
+			if (i == ndims_src_)
+			{
+				break;
+			}
+			coordinate = ((((uint64_t)coarse_index * div_src_[i].magic) >> 32) + coarse_index) >> div_src_[i].shift;
+			coarse_index = coarse_index - coordinate * div_src_[i].divisor;
+			coarse_offset += coordinate * coarse_strides_[i];
+		}
+		return coarse_offset + fine_offset;
+	}
+
+	Divider div_src_[MAX_DIMS];
+	Divider div_dst_[MAX_DIMS];
+	uint32_t strides_src_[MAX_DIMS];
+	uint32_t coarse_strides_[MAX_DIMS];
+
+	int ndims_src_;
+	int ndims_dst_;
+};
 
 struct OffsetCalc_repeat_interleave
 {

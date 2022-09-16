@@ -1647,6 +1647,28 @@ namespace lten {
 			return Tensor();
 		}
 
+		Tensor repeat(const std::initializer_list<uint32_t>& repeats)
+		{
+			uint32_t rpts[MAX_DIMS];
+			int i;
+			int ndims;
+
+			ndims = static_cast<int>(repeats.size());
+
+			if (ndims > MAX_DIMS)
+			{
+				LTEN_ERR("ndims > MAX_DIMS");
+			}
+
+			i = 0;
+			for (uint32_t rep : repeats)
+			{
+				rpts[i++] = rep;
+			}
+
+			return repeat(rpts, ndims);
+		}
+
 		Tensor repeat(const uint32_t* repeats, int nrepeats)
 		{
 			dtype data_type = smart_ptr_->get_data_type();

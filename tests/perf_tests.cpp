@@ -744,3 +744,54 @@ void einsum_fwd_bwd_test()
 	printf("lten::einsum_fwd_bwd_test [duration: %f sec]\n", nseconds);
 
 }
+
+
+void repeat_backward_test()
+{
+	int i;
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+
+	lten::Tensor x;
+	lten::Tensor y;
+	lten::Tensor top_gradient;
+
+	/*
+	x = lten::RandomTensor({ 8, 5 });
+	x.set_autograd(true);
+	x = x.to(lten::GPU);
+
+	y = x.repeat({ 2, 1, 2, 4, 2 });
+	*/
+
+	x = lten::RandomTensor({ 1, 3136, 96 });
+	x.set_autograd(true);
+	x = x.to(lten::GPU);
+
+	y = x.repeat({ 1, 8, 1 });
+
+
+	top_gradient = lten::RandomTensor(y.get_sizes(), y.get_ndims());
+	top_gradient = top_gradient.to(lten::GPU);
+
+	//for (i = 0; i < 100000; i++)
+	for (i = 0; i < 1; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+
+		y.backward(top_gradient.get_mdarray<float>());
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten repeat_backward [duration: %f sec]\n", nseconds);
+}

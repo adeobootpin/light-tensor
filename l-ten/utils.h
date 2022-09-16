@@ -40,7 +40,9 @@ int CopyDataToGPU(void* gpu, void* host, size_t size);
 int CopyDataFromGPU(void* host, void* gpu, size_t size);
 int GPUToGPUCopy(void* dst, void* src, size_t size);
 int GetDevice(int* device);
-void GetStrides(int* dims, int* strides, int ndims);
+void GetStrides(const int* dims, int* strides, int ndims);
+void GetStrides(const uint32_t* dims, uint32_t* strides, int ndims);
+void GetStrides(const uint64_t* dims, uint64_t* strides, int ndims);
 uint32_t GetNextPowerOf2(int number);
 
 #endif // UTILS_H

@@ -2233,7 +2233,6 @@ namespace lten {
 		MultiDimArray<Dtype>* op1_md_array;
 		TensorOps options;
 
-
 		options.data_type = operand1.get_data_type();
 		options.device_type = operand1.get_device();
 		options.device_index = operand1.get_device_index();
@@ -2274,8 +2273,7 @@ namespace lten {
 		if (operand1.autograd_on())
 		{
 			add_child(operand1);
-			misc1_ = nrepeats;
-			//grad_fn_ = ::repeat_backward;
+			grad_fn_ = ::repeat_backward;
 			set_autograd(true);
 		}
 
@@ -2336,7 +2334,7 @@ namespace lten {
 			misc1_ = nrepeats;
 			misc2_ = dim;
 			misc_ptr1_ = scratch;
-			//grad_fn_ = ::repeat_interleave_backward;
+			grad_fn_ = ::repeat_interleave_backward;
 			set_autograd(true);
 		}
 

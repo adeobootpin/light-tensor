@@ -3,6 +3,8 @@
 
 int main(int argc, char* argv[])
 {
+	repeat_backward_test();
+
 	lten::Tensor aa = lten::RandomTensor({ 2, 1, 8, 56, 56, 96 });
 	aa = aa.to(lten::GPU);
 	aa = aa.permute({ 3, 0, 1, 2, 4, 5 });

@@ -1154,7 +1154,7 @@ __global__ void gpu_repeat_vectorized_kernel(float* dst, float* src, int N, Offs
 
 
 template<typename Dtype>
-void gpu_repeat(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint64_t* dims_src, const int ndims)
+void gpu_repeat(Dtype* dst, const Dtype* src, uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint64_t* dims_src, int ndims)
 {
 	uint64_t N;
 	int num_blocks;
@@ -1172,6 +1172,97 @@ void gpu_repeat(Dtype* dst, const Dtype* src, const uint64_t numels, const uint6
 
 	gpu_repeat_vectorized_kernel << < num_blocks, defa_threads >> > ((float*)dst, (float*)src, N, offs_calc);
 
+}
+
+template<typename Dtype>
+__global__ void gpu_repeat_backward_vectorized_kernel(Dtype* dst, const Dtype* src, uint64_t numels_dst, uint64_t repeat_factor, OffsetCalc_repeat_backwards offs)
+{
+	uint32_t thread_id;
+	uint32_t grid_stride;
+	uint32_t i;
+	uint32_t j;
+	uint32_t offset;
+	uint32_t fine_index;
+	uint32_t fine_offset;
+	float4 src4;
+	float4 dst4;
+
+	thread_id = blockIdx.x * blockDim.x + threadIdx.x; // global index;
+	
+	grid_stride = blockDim.x * gridDim.x * vec_size;
+
+	fine_index = thread_id * vec_size;
+
+	for (i = fine_index; i < numels_dst; i += grid_stride)
+	{
+		dst4.x = dst4.y = dst4.z = dst4.w = 0;
+		for (j = 0; j < repeat_factor; j++)
+		{
+			offset = offs.GetOffset(i, j);
+			src4 = *(reinterpret_cast<const float4*>(&src[offset]));
+
+			dst4.x += src4.x;
+			dst4.y += src4.y;
+			dst4.z += src4.z;
+			dst4.w += src4.w;
+		}
+		*(reinterpret_cast<float4*>(&dst[i])) = dst4;
+	}
+}
+
+template<typename Dtype>
+__global__ void gpu_repeat_backward_kernel(Dtype* dst, const Dtype* src, uint64_t numels_dst, uint64_t repeat_factor, OffsetCalc_repeat_backwards offs)
+{
+	uint32_t thread_id;
+	uint32_t grid_stride;
+	uint32_t i;
+	uint32_t j;
+	uint32_t offset;
+	Dtype val;
+
+	thread_id = blockIdx.x * blockDim.x + threadIdx.x; // global index;
+	grid_stride = blockDim.x * gridDim.x;
+
+
+	for (i = thread_id; i < numels_dst; i += grid_stride)
+	{
+		val = 0;
+		for (j = 0; j < repeat_factor; j++)
+		{
+			offset = offs.GetOffset(i, j);
+			val += src[offset];
+		}
+		dst[i] = val;
+	}
+}
+
+template<typename Dtype>
+void gpu_repeat_backward(Dtype* dst, const Dtype* src, uint64_t numels_dst, uint64_t numels_src, const uint64_t* dims_src, int ndims_src, OffsetCalc_repeat_backwards* offs)
+{
+	int threads_required;
+	int warps_required;
+	int warps_per_block;
+	int num_blocks;
+
+	threads_required = numels_dst;
+	warps_required = (threads_required + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
+	warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
+	num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
+
+	
+	//TODO OPTOPT: add vectorization support even when last dim not a multiple of 4 (also add support for when first non-1 dim is a multiple of 4, e.g if dims are 2, 2, 8, 1, 1, 1 this should work with vectorized kernel)
+	if (dims_src[ndims_src - 1] % 4)
+	{
+		warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
+		num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
+
+		gpu_repeat_backward_kernel << < num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (dst, src, numels_dst, numels_src / numels_dst, *offs);
+	}
+	else
+	{
+		gpu_repeat_backward_vectorized_kernel << < num_blocks, warps_per_block * CUDA_WARP_SIZE / vec_size >> > (dst, src, numels_dst, numels_src / numels_dst, *offs);
+	}
+	
 }
 //-----------------------------------------------------------------------------------------------------
 
@@ -1417,6 +1508,10 @@ template void gpu_transpose<uint8_t>(const uint8_t* A, uint8_t* At, const uint64
 template void gpu_repeat<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint64_t* dims_src, const int ndims);
 template void gpu_repeat<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint64_t* dims_src, const int ndims);
 template void gpu_repeat<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, const uint64_t* dims_src, const int ndims);
+
+template void gpu_repeat_backward<float>(float* dst, const float* src, uint64_t numels_dst, uint64_t numels_src, const uint64_t* dims_src, int ndims_src, OffsetCalc_repeat_backwards* offs);
+template void gpu_repeat_backward<int>(int* dst, const int* src, uint64_t numels_dst, uint64_t numels_src, const uint64_t* dims_src, int ndims_src, OffsetCalc_repeat_backwards* offs);
+template void gpu_repeat_backward<uint8_t>(uint8_t* dst, const uint8_t* src, uint64_t numels_dst, uint64_t numels_src, const uint64_t* dims_src, int ndims_src, OffsetCalc_repeat_backwards* offs);
 
 template void gpu_repeat_interleave<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_array, const uint32_t* cummulative_times, int ndims, int ndims_times, int dim);
 template void gpu_repeat_interleave<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_array, const uint32_t* cummulative_times, int ndims, int ndims_times, int dim);
