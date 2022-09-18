@@ -334,7 +334,7 @@ void index_test()
 
 	lten::Tensor x;
 	lten::Tensor y;
-	lten::Tensor indexx;
+	lten::Tensor index;
 	lten::TensorOps op;
 
 	srand(0);
@@ -356,18 +356,18 @@ void index_test()
 	}
 
 	//x = torch::from_blob(data, { 111, 96 }, torch::requires_grad());
-	//indexx = torch::from_blob(indices, { 56, 14 }, torch::kInt32);
-	//indexx = indexx.to(torch::kLong);
+	//index = torch::from_blob(indices, { 56, 14 }, torch::kInt32);
+	//index = index.to(torch::kLong);
 
 	//x = x.to(device);
-	//indexx = indexx.to(device);
+	//index = index.to(device);
 
 	x = lten::RandomTensor({ 111, 96 });
-	x = x.to(lten::GPU);
+	//x = x.to(lten::GPU);
 
 	op.data_type = lten::INT32;
-	indexx = lten::TensorFromBuffer({ 56, 14 }, indices, false, &op);
-	indexx = indexx.to(lten::GPU);
+	index = lten::TensorFromBuffer({ 56, 14 }, indices, false, &op);
+	//index = index.to(lten::GPU);
 
 	//for (i = 0; i < 250000; i++)
 	for (i = 0; i < 1; i++)
@@ -377,7 +377,7 @@ void index_test()
 			clock_begin = std::chrono::steady_clock::now();
 		}
 
-		y = x.index({ indexx });
+		y = x.index({ index });
 	}
 
 	cudaDeviceSynchronize();
@@ -794,4 +794,52 @@ void repeat_backward_test()
 	time_span = clock_end - clock_begin;
 	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
 	printf("lten repeat_backward [duration: %f sec]\n", nseconds);
+}
+
+
+void repeat_interleave_backward_test()
+{
+	int i;
+
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+	uint32_t repeats[MAX_DIMS] = { 3136, 3136, 3136, 3136, 3136, 3136, 3136, 3136 };
+	int nrepeats = 8;
+	uint32_t* scratch;
+	scratch = new uint32_t[nrepeats + 1];
+
+	lten::Tensor x;
+	lten::Tensor y;
+	lten::Tensor top_gradient;
+
+	x = lten::RandomTensor({ 1, 8, 96 });
+	x.set_autograd(true);
+	x = x.to(lten::GPU);
+
+	y = x.repeat_interleave(repeats, nrepeats, 1, scratch);
+
+	top_gradient = lten::RandomTensor(y.get_sizes(), y.get_ndims());
+	top_gradient = top_gradient.to(lten::GPU);
+
+	//for (i = 0; i < 100000; i++)
+	for (i = 0; i < 1; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+
+		y.backward(top_gradient.get_mdarray<float>());
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten repeat interleave [duration: %f sec]\n", nseconds);
+
 }

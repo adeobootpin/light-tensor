@@ -872,7 +872,6 @@ struct OffsetCalc_repeat_backwards
 
 		int i;
 		uint32_t coordinate;
-		uint32_t mod;
 
 		coarse_offset = 0;
 
@@ -981,7 +980,7 @@ struct OffsetCalc_repeat_interleave
 		dim_ = dim;
 	}
 
-	LTEN_HOST_DEVICE uint32_t GetOffsets(uint32_t index)
+	LTEN_HOST_DEVICE uint32_t GetOffset(uint32_t index)
 	{
 		uint32_t src_offset;
 

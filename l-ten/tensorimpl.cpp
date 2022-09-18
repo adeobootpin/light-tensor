@@ -2151,8 +2151,8 @@ namespace lten {
 		{
 			add_child(operand1);
 			index_operand.add_ref();
-			//index_ = &index_operand;
-			//grad_fn_ = ::index_backward;
+			misc_int_tensor_ = &index_operand;
+			grad_fn_ = ::index_backward;
 			set_autograd(true);
 		}
 

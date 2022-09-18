@@ -1471,16 +1471,17 @@ public:
 
 			for (u64i = 0; u64i < numels; u64i++)
 			{
-				src_offset = offs_calc.GetOffsets(u64i);
+				src_offset = offs_calc.GetOffset(u64i);
 
 				dst[u64i] = src[src_offset];
 			}
 		}
 
 
-		//----------------------------------------------------
+		//--------------------------------------------------------------------------
 		// Reference code for repeat_interleave
-		//----------------------------------------------------
+		// -uses the property that coordinates are same for non-dim axes (see below)
+		//--------------------------------------------------------------------------
 		/*
 		for (u64i = 0; u64i < numels; u64i++)
 		{

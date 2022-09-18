@@ -5096,7 +5096,13 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 	uint32_t* scratch;
 	uint32_t* cummulative_times;
 	lten::device device_type;
-
+	Dtype* dst;
+	Dtype* src;
+	const uint64_t* strides_src;
+	uint64_t numels_dst;
+	uint64_t numels_src;
+	uint64_t u64i;
+	uint64_t dst_offset;
 
 	nrepeats = parent_ptr->misc1_;
 	dim = parent_ptr->misc2_;
@@ -5109,69 +5115,135 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 	}
 	cummulative_times = scratch;
 
+	src = top_gradient_ptr->GetDataPtr();
+	dst = bottom_gradient_ptr->GetDataPtr();
+	strides_src = top_gradient_ptr->GetStrides();
+	numels_src = top_gradient_ptr->GetNumels();
+	numels_dst = bottom_gradient_ptr->GetNumels();
+
+	OffsetCalc_repeat_interleave offs_calc(strides_src, bottom_gradient_ptr->GetStrides(), cummulative_times, bottom_gradient_ptr->GetNDims(), nrepeats, dim);
+
 	device_type = parent_ptr->get_device();
 
 	if (device_type == lten::CPU)
 	{
-		Dtype* dst;
-		Dtype* src;
-		const uint64_t* strides_src;
-		uint64_t numels;
-		uint64_t u64i;
-		uint64_t src_offset;
-
-		src = top_gradient_ptr->GetDataPtr();
-		dst = bottom_gradient_ptr->GetDataPtr();
-		strides_src = top_gradient_ptr->GetStrides();
-		numels = top_gradient_ptr->GetNumels();
-
 		memset(bottom_gradient_ptr->GetDataPtr(), 0, sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
-		if (numels)
+		
+		for (u64i = 0; u64i < numels_src; u64i++)
 		{
-			OffsetCalc_repeat_interleave offs_calc(strides_src, bottom_gradient_ptr->GetStrides(), cummulative_times, bottom_gradient_ptr->GetNDims(), nrepeats, dim);
+			dst_offset = offs_calc.GetOffset(u64i);
 
-			for (u64i = 0; u64i < numels; u64i++)
-			{
-				src_offset = offs_calc.GetOffsets(u64i);
-
-				dst[src_offset] += src[u64i];
-			}
+			dst[dst_offset] += src[u64i];
 		}
-
+		
 		/*
-		Dtype* dst;
-		Dtype* src;
-		const uint64_t* strides_dst;
-		uint64_t numels;
-		uint64_t u64i;
-		uint64_t src_offset;
+		int work = 3136 * 8;
+		int num_warps = 120;
+		int warp;
+		int loops_per_warp = work / num_warps;
+		int laneIdx;
 
-		dst = top_gradient_ptr->GetDataPtr();
-		src = bottom_gradient_ptr->GetDataPtr();
-		strides_dst = top_gradient_ptr->GetStrides();
-		numels = top_gradient_ptr->GetNumels();
+		int thread_id[32];
+		int offset[32];
 
-		memset(bottom_gradient_ptr->GetDataPtr(), 0, sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
-		if (numels)
+		for (warp = 0; warp < num_warps; warp++)
 		{
-			OffsetCalc_repeat_interleave offs_calc(strides_dst, children_ptr_array[0]->get_strides(), cummulative_times, children_ptr_array[0]->get_ndims(), nrepeats, dim);
-
-			for (u64i = 0; u64i < numels; u64i++)
+			for (laneIdx = 0; laneIdx < 32; laneIdx++)
 			{
-				src_offset = offs_calc.GetOffsets(u64i);
+				thread_id[laneIdx] = warp * 32 + laneIdx;
+				offset[laneIdx] = thread_id[laneIdx] * loops_per_warp;
+			}
 
-				src[src_offset] += dst[u64i];
+
+			for (laneIdx = 0; laneIdx < 32; laneIdx++)
+			{
+				for( int col = 0; col < 96; col++)
 			}
 		}
 		*/
+		
 	}
 	else
 	{
+		//gpu_repeat_interleave_backward(dst, src, numels_dst, numels_src, &offs_calc);
+
+		uint32_t repeat_dim_dim; // dimension of dimesion[dim]
+		uint32_t repeat;
+		uint32_t stride;
+		const uint64_t* dims_src = bottom_gradient_ptr->GetSizes();
+
+		repeat_dim_dim = dims_src[dim];
+		repeat = cummulative_times[1]; // BUGBUG this will not work when repeat_dim_dim == 1!!!!
+
+		
+
+		stride = 1;
+		for (int i = bottom_gradient_ptr->GetNDims() - 1; i > dim; i--)
+		{
+			stride *= dims_src[i];
+		}
+
+		gpu_repeat_interleave_backward2(dst, src, numels_dst, numels_src, repeat_dim_dim, repeat, stride, &offs_calc); // special case for when all repeat values are the same (much faster)
 
 	}
+}
 
 
+template<typename Dtype>
+void index_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
+{
+	lten::TensorImpl<int>* index_tensor;
+	uint32_t i;
+	uint32_t j;
+	uint32_t num_indices;
+	const int* indices;
+	int index;
+	const uint64_t* dims_dst;
+	Dtype* data_src;
+	Dtype* data_dst;
+	uint64_t copy_len;
+	uint32_t ndims_dst;
+	lten::device device_type;
 
+	index_tensor = parent_ptr->misc_int_tensor_;
+
+	indices = (int*)index_tensor->get_data_ptr();
+	num_indices = index_tensor->get_numels();
+
+	ndims_dst = bottom_gradient_ptr->GetNDims();
+	dims_dst = bottom_gradient_ptr->GetSizes();
+
+	//
+	// compute length of 'copy block' used for forward pass, this is how many elements to update per index in backward pass
+	//
+	copy_len = 1;
+	for (i = 1; i < ndims_dst; i++)
+	{
+		copy_len *= dims_dst[i];
+	}
+
+	data_src = top_gradient_ptr->GetDataPtr();
+	data_dst = bottom_gradient_ptr->GetDataPtr();
+
+	device_type = parent_ptr->get_device();
+
+	if (device_type == lten::CPU)
+	{
+		memset(data_dst, 0, sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
+
+		for (i = 0; i < num_indices; i++)
+		{
+			index = indices[i];
+			for (j = 0; j < copy_len; j++)
+			{
+				data_dst[index * copy_len + j] += data_src[i * copy_len + j];
+			}
+		}
+	}
+	else
+	{
+		gpu_index_backward(data_dst, bottom_gradient_ptr->GetNumels(), data_src, indices, num_indices, copy_len);
+	}
 
 }
 
@@ -5464,6 +5536,7 @@ template void layernorm_backward(MultiDimArray<float>* bottom_gradient_ptr, Mult
 template void masked_fill_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void repeat_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void repeat_interleave_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
+template void index_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void permute_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void pseudo_einsum1_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
 template void pseudo_einsum2_backward(MultiDimArray<float>* bottom_gradient_ptr, MultiDimArray<float>* top_gradient_ptr, lten::TensorImpl<float>** children_ptr_array, int child_index, lten::TensorImpl<float>* parent_ptr);
@@ -5499,6 +5572,7 @@ template void embedding_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiD
 template void mean_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void repeat_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void repeat_interleave_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
+template void index_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void var_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void std_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
 template void layernorm_backward(MultiDimArray<int>* bottom_gradient_ptr, MultiDimArray<int>* top_gradient_ptr, lten::TensorImpl<int>** children_ptr_array, int child_index, lten::TensorImpl<int>* parent_ptr);
@@ -5542,6 +5616,7 @@ template void layernorm_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, Mu
 template void masked_fill_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void repeat_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void repeat_interleave_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
+template void index_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void permute_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void pseudo_einsum1_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);
 template void pseudo_einsum2_backward(MultiDimArray<uint8_t>* bottom_gradient_ptr, MultiDimArray<uint8_t>* top_gradient_ptr, lten::TensorImpl<uint8_t>** children_ptr_array, int child_index, lten::TensorImpl<uint8_t>* parent_ptr);

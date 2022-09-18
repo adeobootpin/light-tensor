@@ -3,7 +3,7 @@
 
 int main(int argc, char* argv[])
 {
-	repeat_backward_test();
+	index_test(); return 0;
 
 	lten::Tensor aa = lten::RandomTensor({ 2, 1, 8, 56, 56, 96 });
 	aa = aa.to(lten::GPU);
