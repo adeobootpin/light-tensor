@@ -5103,11 +5103,13 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 	uint64_t numels_src;
 	uint64_t u64i;
 	uint64_t dst_offset;
+	const uint64_t* dims_src;
 
+
+	dims_src = bottom_gradient_ptr->GetSizes();
 	nrepeats = parent_ptr->misc1_;
 	dim = parent_ptr->misc2_;
 	scratch = static_cast<uint32_t*>(parent_ptr->misc_ptr1_);
-
 
 	if (!scratch)
 	{
@@ -5120,8 +5122,11 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 	strides_src = top_gradient_ptr->GetStrides();
 	numels_src = top_gradient_ptr->GetNumels();
 	numels_dst = bottom_gradient_ptr->GetNumels();
+	
 
-	OffsetCalc_repeat_interleave offs_calc(strides_src, bottom_gradient_ptr->GetStrides(), cummulative_times, bottom_gradient_ptr->GetNDims(), nrepeats, dim);
+	OffsetCalc_repeat_interleave offs_calc(strides_src, bottom_gradient_ptr->GetStrides(), cummulative_times, bottom_gradient_ptr->GetNDims(), dims_src[dim], dim);  // use dims_src[dim] here because nrepeats could be 1 (a.k.a boradcast mode) and the 'real' number of repreats is required for this call
+
+	uint32_t ofs = offs_calc.GetOffset(903168);
 
 	device_type = parent_ptr->get_device();
 
@@ -5166,25 +5171,37 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 	else
 	{
 		//gpu_repeat_interleave_backward(dst, src, numels_dst, numels_src, &offs_calc);
-
-		uint32_t repeat_dim_dim; // dimension of dimesion[dim]
-		uint32_t repeat;
-		uint32_t stride;
-		const uint64_t* dims_src = bottom_gradient_ptr->GetSizes();
-
-		repeat_dim_dim = dims_src[dim];
-		repeat = cummulative_times[1]; // BUGBUG this will not work when repeat_dim_dim == 1!!!!
-
-		
-
-		stride = 1;
-		for (int i = bottom_gradient_ptr->GetNDims() - 1; i > dim; i--)
+		//return;
+		if (nrepeats == dims_src[dim])
 		{
-			stride *= dims_src[i];
+			gpu_repeat_interleave_backward(dst, src, numels_dst, numels_src, &offs_calc);
 		}
+		else
+		{
+			if (nrepeats != 1) // must be 1 for broadcast mode
+			{
+				LTEN_ERR("repeat_interleave_backward requires nrepeats parameter to be 1 if different from dims[dim] (i.e. broadcast mode)");
+			}
+			//
+			// broadcast mode - only 1 repeat value is provided (and therefore applied to all indices)
+			//
+			uint32_t repeat_dim_dim; // dimension of dimesion[dim]
+			uint32_t repeat;
+			uint32_t stride;
+	
 
-		gpu_repeat_interleave_backward2(dst, src, numels_dst, numels_src, repeat_dim_dim, repeat, stride, &offs_calc); // special case for when all repeat values are the same (much faster)
+			repeat_dim_dim = dims_src[dim];
+			repeat = cummulative_times[1]; // BUGBUG this will not work when repeat_dim_dim == 1!!!!
 
+			stride = 1;
+			for (int i = bottom_gradient_ptr->GetNDims() - 1; i > dim; i--)
+			{
+				stride *= dims_src[i];
+			}
+
+			gpu_repeat_interleave_backward2(dst, src, numels_dst, numels_src, repeat_dim_dim, repeat, stride, &offs_calc); // special case for when all repeat values are the same (much faster)
+
+		}
 	}
 }
 
@@ -5241,8 +5258,20 @@ void index_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dty
 		}
 	}
 	else
-	{
-		gpu_index_backward(data_dst, bottom_gradient_ptr->GetNumels(), data_src, indices, num_indices, copy_len);
+	{				
+		if (lten::GPU == device_type)
+		{
+#ifdef USE_CUDA
+			gpu_index_backward(data_dst, bottom_gradient_ptr->GetNumels(), data_src, indices, num_indices, copy_len);
+#else
+			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+		}
+		else
+		{
+			LTEN_ERR("Invalid tesor data type");
+		}
+
 	}
 
 }

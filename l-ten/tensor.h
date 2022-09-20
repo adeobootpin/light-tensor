@@ -1722,9 +1722,16 @@ namespace lten {
 
 		// scratch is optional but may make processing faster by avoiding memory allocations
 		// Note: nrepeats can be extremely large
-		// Optional buffer scratch, if provided should be of length nrepeats + 1
+		// Optional buffer scratch, if provided should be of size nrepeats + 1
 		// It will be used to store the cummulative repeats array (see md_array repeat_interleave funs)
 		// Note: if backward processing is required, scratch *must* point to memory that is valid during backward processing
+		// Note: when using broadcast mode, scratch, if provided should be of size dims[dim] + 1 (i.e. actual number of repeats + 1)
+
+		Tensor repeat_interleave(uint32_t repeat, int dim, uint32_t* scratch = nullptr) // broadcast version of function (repeat is broadcast to all 'rows' of dim)
+		{
+			return repeat_interleave(&repeat, 1, dim, scratch); // call general form of function
+		}
+
 		Tensor repeat_interleave(const uint32_t* repeats, int nrepeats, int dim, uint32_t* scratch = nullptr)
 		{
 			dtype data_type = smart_ptr_->get_data_type();
@@ -1778,7 +1785,7 @@ namespace lten {
 
 
 		/*
-				Tensor reshape(const std::initializer_list<uint64_t>& dims)
+		Tensor reshape(const std::initializer_list<uint64_t>& dims)
 		{
 			uint64_t dims_array[MAX_DIMS];
 			int i;

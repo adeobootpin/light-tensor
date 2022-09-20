@@ -1421,28 +1421,46 @@ public:
 		uint64_t coordinate;
 		uint64_t src_offset;
 		uint64_t dst_offset;
+		bool broadcast_mode;
 
 		if (dim >= ndims_)
 		{
 			LTEN_ERR("Dimesion parameter is out of range");
 		}
 
-		if (nrepeats != dims_array_[dim])
+		if (nrepeats != dims_array_[dim] && nrepeats != 1)
 		{
 			LTEN_ERR("Sum of repeat values must equal size of dimension");
 		}
 
 		memcpy(dims_result, dims_array_, sizeof(uint64_t) * ndims_);
-		sum = 0;
-		for (i = 0; i < nrepeats; i++)
+
+		if (nrepeats == 1) // support broadcast syntax
 		{
-			if (repeats[i] < 0)
+			if (repeats[0] < 0)
 			{
 				LTEN_ERR("Repeat values must be greater than or equal to zero");
 			}
-			sum += repeats[i];
+
+			nrepeats = dims_array_[dim];
+			sum = repeats[0] * nrepeats;
+			broadcast_mode = true; // may not actually be true (if dims_array_[dim] is actually = 1) but no harm is done
+		}
+		else
+		{
+			sum = 0;
+			for (i = 0; i < nrepeats; i++)
+			{
+				if (repeats[0] < 0)
+				{
+					LTEN_ERR("Repeat values must be greater than or equal to zero");
+				}
+				sum += repeats[i];
+			}
+			broadcast_mode = false;
 		}
 		dims_result[dim] = sum;
+
 
 		cummulative_times = scratch;
 		if (!cummulative_times)
@@ -1453,7 +1471,15 @@ public:
 		cummulative_times[0] = 0; // need this array for index look-up
 		for (i = 1; i < nrepeats; i++)
 		{
-			cummulative_times[i] = cummulative_times[i - 1] + repeats[i - 1];
+			if (broadcast_mode)
+			{
+				cummulative_times[i] = cummulative_times[i - 1] + repeats[0];
+			}
+			else
+			{
+				cummulative_times[i] = cummulative_times[i - 1] + repeats[i - 1];
+			}
+			
 		}
 		cummulative_times[nrepeats] = INT_MAX; // need stopper value so that linear scan (below) works
 
@@ -1505,7 +1531,7 @@ public:
 				}
 				else
 				{
-					src_offset += coordinate * strides_array_[j]; // coordinate is same for non-dim axis
+					src_offset += coordinate * strides_array_[j]; // coordinate is same for non-dim axes
 				}
 
 

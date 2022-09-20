@@ -42,6 +42,7 @@ void repeat_test();
 void repeat_interleave_test();
 void repeat_interleave_backward_test();
 void index_test();
+void index_backward_test();
 void embedding_test();
 void transpose_backwards_test();
 void einsum_fwd_bwd_test();

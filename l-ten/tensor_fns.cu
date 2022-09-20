@@ -1306,8 +1306,45 @@ void gpu_repeat_interleave(Dtype* dst, const Dtype* src, const uint64_t numels, 
 }
 
 
+
 template<typename Dtype>
 __global__ void gpu_repeat_interleave_backward_kernel2(Dtype* dst, const Dtype* src, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave offs)
+{
+	uint32_t dst_offset;
+	uint32_t src_offset;
+	int i;
+	int j;
+	float val;
+
+	uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x; // global index;
+	uint32_t warpIdx = thread_id / warpSize;
+	uint32_t warps_per_src_bloc = 1;
+	uint32_t srcBlockIdx = warpIdx / warps_per_src_bloc;
+	uint32_t laneId = threadIdx.x % warpSize;
+
+	for (i = laneId; i < stride; i += warpSize)
+	{
+		src_offset = srcBlockIdx * repeat * stride + i;
+		if (src_offset >= numels_src)
+		{
+			break;
+		}
+		dst_offset = offs.GetOffset(src_offset);
+		val = 0;
+
+		for (j = warpIdx % warps_per_src_bloc; j < repeat; j += warps_per_src_bloc)
+		{
+			val += src[src_offset + j * stride];
+		}
+
+		atomicAdd((float*)&dst[dst_offset], val);
+	}
+
+}
+
+
+template<typename Dtype>
+__global__ void gpu_repeat_interleave_backward_kernel2xx(Dtype* dst, const Dtype* src, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave offs)
 {
 	uint32_t dst_offset;
 	uint32_t src_offset;
@@ -1326,6 +1363,10 @@ __global__ void gpu_repeat_interleave_backward_kernel2(Dtype* dst, const Dtype* 
 	for (i = laneId; i < stride; i += warpSize)
 	{
 		src_offset = srcBlockIdx * repeat * stride + i;
+		if (src_offset >= numels_src)
+		{
+			break;
+		}
 		dst_offset = offs.GetOffset(src_offset);
 		val = 0;
 
@@ -1337,38 +1378,6 @@ __global__ void gpu_repeat_interleave_backward_kernel2(Dtype* dst, const Dtype* 
 		atomicAdd((float*)&dst[dst_offset], val);
 	}
 
-
-	/*
-	const int factor = 2;
-	for (i = threadIdx.x; i < 96; i += blockDim.x)
-	{
-		src_offset = (blockIdx.x / factor) * 3136 * 96 + i;
-		dst_offset = offs.GetOffset(src_offset);
-		val = 0;
-
-		for (j = blockIdx.x % factor; j < 3136; j+= factor)
-		{
-			val += src[src_offset + j * 96];
-		}
-
-		atomicAdd((float*)&dst[dst_offset], val);
-	}
-	*/
-	/*
-	for (i = threadIdx.x; i < 96; i+= warpSize)
-	{
-		src_offset = blockIdx.x * 3136 * 96 + threadIdx.x;
-		dst_offset = offs.GetOffset(src_offset);
-		val = 0;
-
-		for (j = 0; j < 3136; j++)
-		{
-			val += src[src_offset + j * 96];
-		}
-
-		dst[dst_offset] = val;
-	}
-	*/
 }
 
 template<typename Dtype>
@@ -1465,7 +1474,7 @@ void gpu_repeat_interleave_backward2(Dtype* dst, const Dtype* src, uint64_t nume
 	num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
 
 	//gpu_repeat_interleave_backward_kernel2 << < 8 * 20, 32 * 4 >> > (dst, src, numels_src, 8, 3136, 96, *offs);
-	gpu_repeat_interleave_backward_kernel2 << < 8 * 20, 32 * 4 >> > (dst, src, numels_src, repeat_dim_dim, repeat, stride, *offs);
+	gpu_repeat_interleave_backward_kernel2 << < 2, 32 * 16 >> > (dst, src, numels_src, repeat_dim_dim, repeat, stride, *offs);
 
 }
 
@@ -1535,7 +1544,7 @@ void gpu_index(Dtype* dst, const Dtype* src, const int* indices, uint64_t copy_l
 
 
 template<typename Dtype>
-__global__ void gpu_index_backward_kernel(Dtype* dst, const Dtype* src, const int* indices, uint32_t copy_len)
+__global__ void gpu_index_backward_kernel(Dtype* dst, const Dtype* src, const int* indices, int num_indices, uint32_t copy_len)
 {
 	uint32_t thread_id;
 	uint32_t src_index;
@@ -1545,6 +1554,11 @@ __global__ void gpu_index_backward_kernel(Dtype* dst, const Dtype* src, const in
 	uint32_t j;
 
 	thread_id = blockIdx.x * blockDim.x + threadIdx.x; // global index;
+
+	if (thread_id >= num_indices * copy_len)
+	{
+		return;
+	}
 
 	i = thread_id / copy_len;
 	j = thread_id % copy_len;
@@ -1570,7 +1584,7 @@ void gpu_index_backward(Dtype* dst, uint64_t numels_dst, const Dtype* src, const
 	warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
 	num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
 
-	gpu_index_backward_kernel << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (dst, src, indices, copy_len);
+	gpu_index_backward_kernel << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (dst, src, indices, num_indices, copy_len);
 
 }
 //-----------------------------------------------------------------------------------------------------
