@@ -60,7 +60,7 @@ template<typename Dtype>
 void gpu_repeat_interleave_backward(Dtype* dst, const Dtype* src, uint64_t numels_dst, uint64_t numels_src, OffsetCalc_repeat_interleave* offs);
 
 template<typename Dtype>
-void gpu_repeat_interleave_backward2(Dtype* dst, const Dtype* src, uint64_t numels_dst, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave* offs); // special case for when all repeat values are the same (much faster)
+void gpu_repeat_interleave_broadcast_backward(Dtype* dst, const Dtype* src, uint64_t numels_dst, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave* offs); // special case for when all repeat values are the same (much faster)
 
 template<typename Dtype>
 void gpu_index(Dtype* dst, const Dtype* src, const int* indices, uint64_t copy_len, const uint64_t numels);

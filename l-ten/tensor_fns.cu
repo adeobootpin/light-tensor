@@ -1308,7 +1308,7 @@ void gpu_repeat_interleave(Dtype* dst, const Dtype* src, const uint64_t numels, 
 
 
 template<typename Dtype>
-__global__ void gpu_repeat_interleave_backward_kernel2(Dtype* dst, const Dtype* src, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave offs)
+__global__ void gpu_repeat_interleave_backward_broadcast_kernel(Dtype* dst, const Dtype* src, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, uint32_t warps_per_src_bloc, OffsetCalc_repeat_interleave offs)
 {
 	uint32_t dst_offset;
 	uint32_t src_offset;
@@ -1317,8 +1317,7 @@ __global__ void gpu_repeat_interleave_backward_kernel2(Dtype* dst, const Dtype* 
 	float val;
 
 	uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x; // global index;
-	uint32_t warpIdx = thread_id / warpSize;
-	uint32_t warps_per_src_bloc = 1;
+	uint32_t warpIdx = thread_id / warpSize;	
 	uint32_t srcBlockIdx = warpIdx / warps_per_src_bloc;
 	uint32_t laneId = threadIdx.x % warpSize;
 
@@ -1343,42 +1342,6 @@ __global__ void gpu_repeat_interleave_backward_kernel2(Dtype* dst, const Dtype* 
 }
 
 
-template<typename Dtype>
-__global__ void gpu_repeat_interleave_backward_kernel2xx(Dtype* dst, const Dtype* src, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave offs)
-{
-	uint32_t dst_offset;
-	uint32_t src_offset;
-	int i;
-	int j;
-	float val;
-	
-	uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x; // global index;
-	uint32_t warpIdx = thread_id / warpSize;
-	uint32_t totalWarps = gridDim.x * blockDim.x / warpSize;
-	uint32_t srcBlockWarpsCount = totalWarps / repeat_dim_dim;
-	uint32_t srcBlockIdx = warpIdx / srcBlockWarpsCount;
-	uint32_t laneId = threadIdx.x % warpSize;
-
-
-	for (i = laneId; i < stride; i += warpSize)
-	{
-		src_offset = srcBlockIdx * repeat * stride + i;
-		if (src_offset >= numels_src)
-		{
-			break;
-		}
-		dst_offset = offs.GetOffset(src_offset);
-		val = 0;
-
-		for (j = warpIdx % srcBlockWarpsCount; j < repeat; j += srcBlockWarpsCount)
-		{
-			val += src[src_offset + j * stride];
-		}
-
-		atomicAdd((float*)&dst[dst_offset], val);
-	}
-
-}
 
 template<typename Dtype>
 __global__ void gpu_repeat_interleave_backward_vectorized_kernel(Dtype* dst, const Dtype* src, uint64_t numels_src, OffsetCalc_repeat_interleave offs)
@@ -1405,37 +1368,6 @@ __global__ void gpu_repeat_interleave_backward_vectorized_kernel(Dtype* dst, con
 		dst_offset = offs.GetOffset(thread_id + i);
 		atomicAdd((float*)&dst[dst_offset], ((float*)&src4)[i]);
 	}
-	
-
-	/*
-	dst_offset = offs.GetOffset(thread_id);
-	atomicAdd((float*)&dst[dst_offset], src[thread_id++]);
-
-	dst_offset = offs.GetOffset(thread_id);
-	atomicAdd((float*)&dst[dst_offset], src[thread_id++]);
-
-	dst_offset = offs.GetOffset(thread_id);
-	atomicAdd((float*)&dst[dst_offset], src[thread_id++]);
-
-	dst_offset = offs.GetOffset(thread_id);
-	atomicAdd((float*)&dst[dst_offset], src[thread_id++]);
-	*/
-
-	/*
-	src4 = *(reinterpret_cast<const float4*>(&src[thread_id]));
-
-	dst_offset = offs.GetOffset(thread_id++);
-	atomicAdd((float*)&dst[dst_offset], ((float*)&src4)[0]);
-
-	dst_offset = offs.GetOffset(thread_id++);
-	atomicAdd((float*)&dst[dst_offset], ((float*)&src4)[1]);
-
-	dst_offset = offs.GetOffset(thread_id++);
-	atomicAdd((float*)&dst[dst_offset], ((float*)&src4)[2]);
-
-	dst_offset = offs.GetOffset(thread_id++);
-	atomicAdd((float*)&dst[dst_offset], ((float*)&src4)[3]);
-	*/
 }
 
 
@@ -1459,22 +1391,25 @@ __global__ void gpu_repeat_interleave_backward_kernel(Dtype* dst, const Dtype* s
 
 
 template<typename Dtype>
-void gpu_repeat_interleave_backward2(Dtype* dst, const Dtype* src, uint64_t numels_dst, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave* offs) // special case for when all repeat values are the same (much faster)
+void gpu_repeat_interleave_broadcast_backward(Dtype* dst, const Dtype* src, uint64_t numels_dst, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave* offs) // special case for when all repeat values are the same (much faster)
 {
-	int threads_required;
+	int num_src_blocks;
+	int warps_per_src_bloc;
 	int warps_required;
 	int warps_per_block;
 	int num_blocks;
 
 	cudaMemsetAsync(dst, 0, sizeof(Dtype) * numels_dst); // get this going now...
 
-	threads_required = numels_src;
-	warps_required = (threads_required + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
+	num_src_blocks = numels_src / repeat / stride;
+	warps_per_src_bloc = min(128, repeat); // <----------------tweak this for perf but make less than repeat
+	warps_required = num_src_blocks * warps_per_src_bloc;
+
+
 	warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
 	num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
 
-	//gpu_repeat_interleave_backward_kernel2 << < 8 * 20, 32 * 4 >> > (dst, src, numels_src, 8, 3136, 96, *offs);
-	gpu_repeat_interleave_backward_kernel2 << < 2, 32 * 16 >> > (dst, src, numels_src, repeat_dim_dim, repeat, stride, *offs);
+	gpu_repeat_interleave_backward_broadcast_kernel << < num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (dst, src, numels_src, repeat_dim_dim, repeat, stride, warps_per_src_bloc, *offs);
 
 }
 
@@ -1762,9 +1697,9 @@ template void gpu_repeat_interleave_backward<float>(float* dst, const float* src
 template void gpu_repeat_interleave_backward<int>(int* dst, const int* src, uint64_t numels_dst, uint64_t numels_src, OffsetCalc_repeat_interleave* offs);
 template void gpu_repeat_interleave_backward<uint8_t>(uint8_t* dst, const uint8_t* src, uint64_t numels_dst, uint64_t numels_src, OffsetCalc_repeat_interleave* offs);
 
-template void gpu_repeat_interleave_backward2<float>(float* dst, const float* src, uint64_t numels_dst, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave* offs);
-template void gpu_repeat_interleave_backward2<int>(int* dst, const int* src, uint64_t numels_dst, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave* offs);
-template void gpu_repeat_interleave_backward2<uint8_t>(uint8_t* dst, const uint8_t* src, uint64_t numels_dst, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave* offs);
+template void gpu_repeat_interleave_broadcast_backward<float>(float* dst, const float* src, uint64_t numels_dst, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave* offs);
+template void gpu_repeat_interleave_broadcast_backward<int>(int* dst, const int* src, uint64_t numels_dst, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave* offs);
+template void gpu_repeat_interleave_broadcast_backward<uint8_t>(uint8_t* dst, const uint8_t* src, uint64_t numels_dst, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave* offs);
 
 template void gpu_index<float>(float* dst, const float* src, const int* indices, uint64_t copy_len, const uint64_t numels);
 template void gpu_index<int>(int* dst, const int* src, const int* indices, uint64_t copy_len, const uint64_t numels);

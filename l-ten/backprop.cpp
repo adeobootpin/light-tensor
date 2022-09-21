@@ -4968,6 +4968,20 @@ void masked_fill_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArr
 	}
 }
 
+//-----------------------------------------------------------------------------------------------------------------------
+/*
+Small to big paradigm applies here (original tensor shape to repeated tensor shape)
+Source shape (top_gradient) viewed as a thick 'wall' made up of 'bricks' of target shape (bottom_gradient)
+The goal is to find all the locations where each brick is placed in the wall. This is not an exact metaphor because
+each 'brick' is placed in several places (i.e. repeated) in the wall. Once these locations are found, the reduction
+can then proceed.
+
+Terminology: Coarse coordinates/offsets are with respect to the 'wall' where a unit is a brick with the shape of the 
+origianl tensor. Fine coordinates/offsets are with respect to the 'brick'. In other words, 'normal' 1-unit coordinates.
+
+See gpu_repeat_backward and OffsetCalc_repeat_backwards for implementation
+*/
+//-----------------------------------------------------------------------------------------------------------------------
 template<typename Dtype>
 void repeat_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
@@ -5039,7 +5053,7 @@ void repeat_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dt
 	return;
 
 	//----------------------------------------------------
-	//refernce cpu code
+	//reference cpu code
 	//----------------------------------------------------
 	/*
 	GetStrides(repeats, repeat_strides, nrepeats);
@@ -5088,6 +5102,32 @@ void repeat_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dt
 
 
 
+//-----------------------------------------------------------------------------------------------------------------------------
+/*
+Big to small paradigm applies here, (repeated tensor shape to original tensor shape) and so atomics employed.
+
+Default implementation uses same offset calculator as forward pass which works in the required fashion.
+
+On the GPU, good speed-ups can be achieved by special-casing calls with a single repeat interleave value (i.e. broadcast mode)
+
+The goal is to perform a majority of the summations in stack variables before writing to memory using atomics.
+The uniformity of the repetitions makes it easier to share the workload between threads (the workload is the same for all)
+Non uniform repetitions would make it difficult to balance threads and number of elements to sum before writing to memory.
+
+Assume bottom_graidient has shape {2, 8, 96}, repeats is 3136 and dim = 1, then top_gradient has shape { 2, 25088, 96 }
+What this means it that the destination can be viewed as 16 blocks of size 96. The source can be also be viewed as 16 'coarse' 
+blocks of size 96. However each of these coarse blocks has a row 3136 thick (instead of 1).  The task is therefore to 'reduce' 
+the 16 'coarse' source blocks into the 16 'fine' target blocks.
+
+Each block is reduced by a group of warps, each warp handling alternating rows and 'reducing' from 'top' to 'bottom'. Intermediate
+sums are stored in local variables before writing to memory with atomics.
+
+Note there is a tweakable parameter; the number of warps per block. The smaller this number, the more sums are done in local 
+variables and hence the fewer atomics are required. However if the number is too small, a lot of cylcles as spent looping.
+
+See gpu_repeat_interleave_broadcast_backward for implementation
+*/
+//-----------------------------------------------------------------------------------------------------------------------------
 template<typename Dtype>
 void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
@@ -5140,38 +5180,9 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 
 			dst[dst_offset] += src[u64i];
 		}
-		
-		/*
-		int work = 3136 * 8;
-		int num_warps = 120;
-		int warp;
-		int loops_per_warp = work / num_warps;
-		int laneIdx;
-
-		int thread_id[32];
-		int offset[32];
-
-		for (warp = 0; warp < num_warps; warp++)
-		{
-			for (laneIdx = 0; laneIdx < 32; laneIdx++)
-			{
-				thread_id[laneIdx] = warp * 32 + laneIdx;
-				offset[laneIdx] = thread_id[laneIdx] * loops_per_warp;
-			}
-
-
-			for (laneIdx = 0; laneIdx < 32; laneIdx++)
-			{
-				for( int col = 0; col < 96; col++)
-			}
-		}
-		*/
-		
 	}
 	else
 	{
-		//gpu_repeat_interleave_backward(dst, src, numels_dst, numels_src, &offs_calc);
-		//return;
 		if (nrepeats == dims_src[dim])
 		{
 			gpu_repeat_interleave_backward(dst, src, numels_dst, numels_src, &offs_calc);
@@ -5199,7 +5210,7 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 				stride *= dims_src[i];
 			}
 
-			gpu_repeat_interleave_backward2(dst, src, numels_dst, numels_src, repeat_dim_dim, repeat, stride, &offs_calc); // special case for when all repeat values are the same (much faster)
+			gpu_repeat_interleave_broadcast_backward(dst, src, numels_dst, numels_src, repeat_dim_dim, repeat, stride, &offs_calc); // special case for when all repeat values are the same (much faster)
 
 		}
 	}

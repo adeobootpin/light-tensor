@@ -1,6 +1,8 @@
 #ifndef OFFSET_CALC_H
 #define OFFSET_CALC_H
 
+#include "utils.h"
+
 #ifdef __NVCC__
 #define LTEN_HOST_DEVICE __host__ __device__
 #else
@@ -764,7 +766,7 @@ struct OffsetCalc_repeat
 	int ndims_;
 };
 
-//#include "utils.h"
+
 void ReshapeDims(const uint64_t* current_dims_ptr, int current_size, uint64_t* new_dims_ptr, int new_size);
 void GetStrides(const uint32_t* dims, uint32_t* strides, int ndims);
 void GetStrides(const uint64_t* dims, uint64_t* strides, int ndims);
