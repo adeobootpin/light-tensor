@@ -1,6 +1,5 @@
 #include <iostream>
-#include "tensor.h"
-#include "layers.h"
+#include "lten.h"
 #include "utils.h"
 
 namespace lten {

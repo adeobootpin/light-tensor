@@ -1,5 +1,9 @@
+#ifndef MD_ARRAY_CUDA_H
+#define MD_ARRAY_CUDA_H
+
 #include "md_array.h"
 #include "utils.h"
+#include "tensor_fns.h"
 
 /*
 MIT License
@@ -524,9 +528,9 @@ public:
 				Dtype* lhs_data = GetDataPtr();
 				Dtype* rhs_data = other.GetDataPtr();
 
-				int stridea = N * K;
-				int strideb = K * M;
-				int stridec = N * M;
+				int stridea = static_cast<int>(N * K);
+				int strideb = static_cast<int>(K * M);
+				int stridec = static_cast<int>(N * M);
 
 				status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
 					(float*)rhs_data, lda, stridea, (float*)lhs_data, ldb, strideb, &beta, (float*)result_data, ldc, stridec, num_batches);
@@ -541,7 +545,7 @@ public:
 			Dtype* rhs_data = other.GetDataPtr();
 			int num_batches;
 
-			num_batches = result.GetNumels() / (dims_result[ndims_ - 1] * dims_result[ndims_ - 2]);
+			num_batches = static_cast<int>(result.GetNumels() / (dims_result[ndims_ - 1] * dims_result[ndims_ - 2]));
 
 			if (!pointer_array)
 			{
@@ -581,7 +585,7 @@ public:
 				status = cublasSgemmBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
 					(float**)pointer_array->b_array, lda, (float**)pointer_array->a_array, ldb, &beta, (float**)pointer_array->c_array, ldc, num_batches);
 
-				delete pa_cpu.buffer;
+				delete (float*)pa_cpu.buffer;
 				FreeMemoryOnGPU(pa_gpu.buffer);
 			}
 			else
@@ -754,10 +758,10 @@ public:
 		data = result.GetDataPtr();
 		other_data_ptr = other.GetDataPtr();
 
-		result_strides_array[dim - 1];
-		strides_array_[dim - 1];
-		other_strides_array[dim - 1];
-		other_strides_array[dim];
+		//result_strides_array[dim - 1];
+		//strides_array_[dim - 1];
+		//other_strides_array[dim - 1];
+		//other_strides_array[dim];
 
 		dim_offset = dims_array_[dim];
 		other_numels = other.GetNumels();
@@ -785,7 +789,6 @@ public:
 		int ndims;
 		int other_ndims;
 		int i;
-		uint64_t u64i;
 		Dtype* dst;
 		Dtype* src;
 		int* indices;
@@ -828,7 +831,6 @@ public:
 		uint64_t dims_result[MAX_DIMS];
 		uint64_t dims_buffer[MAX_DIMS];
 		uint64_t strides_buffer[MAX_DIMS];
-		const uint64_t* strides_dst;
 		uint64_t* dims_src; // need 'squeezed' src dims if ndims > ndims_ 
 		uint64_t* strides_src;
 		uint64_t numels;
@@ -862,11 +864,6 @@ public:
 
 		for (i = 0; i < ndims; i++) // generate result dimesions
 		{
-			if (repeats[i] < 0)
-			{
-				LTEN_ERR("Repeat values must be greater than or equal to zero");
-			}
-
 			dims_result[i] = dims_src[i] * repeats[i];
 		}
 
@@ -910,8 +907,7 @@ public:
 		uint64_t numels;
 		Dtype* src;
 		int i;
-		int j;
-		int k;
+
 		bool broadcast_mode;
 
 		if (dim >= ndims_)
@@ -928,11 +924,6 @@ public:
 
 		if (nrepeats == 1) // support broadcast syntax
 		{
-			if (repeats[0] < 0)
-			{
-				LTEN_ERR("Repeat values must be greater than or equal to zero");
-			}
-
 			nrepeats = dims_array_[dim];
 			sum = repeats[0] * nrepeats;
 			broadcast_mode = true; // may not actually be true (if dims_array_[dim] is actually = 1) but no harm is done
@@ -942,10 +933,6 @@ public:
 			sum = 0;
 			for (i = 0; i < nrepeats; i++)
 			{
-				if (repeats[0] < 0)
-				{
-					LTEN_ERR("Repeat values must be greater than or equal to zero");
-				}
 				sum += repeats[i];
 			}
 			broadcast_mode = false;
@@ -1012,4 +999,4 @@ private:
 
 };
 
-
+#endif //MD_ARRAY_CUDA_H

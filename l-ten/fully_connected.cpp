@@ -1,7 +1,6 @@
 #include <random>
 #include <iostream>
-#include "tensor.h"
-#include "layers.h"
+#include "lten.h"
 #include "utils.h"
 
 
@@ -176,7 +175,7 @@ namespace lten {
 		}
 
 		
-		if (is_training_)
+		if (is_training_ || input.autograd_on())
 		{
 			resultImpl->misc_ptr1_ = this;
 			resultImpl->add_child(*(static_cast<TensorImpl<float>*>(input.get_smart_ptr().get_real_object())));

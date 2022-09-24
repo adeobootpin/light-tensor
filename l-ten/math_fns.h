@@ -15,7 +15,7 @@ struct QuantizationParams
 	uint8_t zero_point;
 };
 
-#include "tensor_fns.h"
+//#include "tensor_fns.h"
 
 template<typename Dtype>
 void cpu_gemm(bool transA, bool transB, uint64_t M, uint64_t N, uint64_t K, Dtype alpha, Dtype* A, Dtype* B, Dtype beta, Dtype* C);

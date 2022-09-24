@@ -796,7 +796,7 @@ void gpu_scalar_mul(float alpha, float* A, float* C, uint64_t height_A, uint64_t
 	gpu_axpy_kernel << <dimGrid, dimBlock >> > (A, C, (int)height_A, (int)width_A, (int)height_C, (int)width_C, max_height, max_width);
 
 
-	gpu_scalar_mul<float>(A, A, 1.0/alpha, len); // need to fix this!!!
+	gpu_scalar_mul<float>(A, A, 1.0f/alpha, len); // TODO: need to fix this!!!
 }
 
 

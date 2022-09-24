@@ -26,6 +26,9 @@ SOFTWARE.
 */
 
 
+#include "tensorimpl.h"
+#include "md_array.h"
+#include "md_array_cuda.h"
 #include "tensor.h"
 #include "layers.h"
 #include "net.h"

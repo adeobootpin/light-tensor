@@ -71,6 +71,8 @@ int neural_network_test()
 	optimizer.attach_network(net);
 	optimizer.set_learning_rate(lr);
 
+	net.train(true);
+
 	numels_per_batch = input.get_numels() / batch_size;
 	index = 0;
 
@@ -108,7 +110,7 @@ int neural_network_test()
 	}
 
 	val = *((float*)loss.get_data_ptr());
-  printf("  loss: %f\n", val);
+	printf("  loss: %f\n", val);
 	if (val < 50.0f)
 	{
 		return 0;
@@ -174,7 +176,7 @@ int MNIST_test(const char* MNIST_training_images, const char* MNIST_training_lab
 	uint64_t data_len = img_dim * img_dim;
 	uint64_t label_len = 10;
 	float label_array[10];
-	float lr = 0.001f;
+	float lr = 0.0001f;
 	Net net(1, 10, 5, 5);
 	int batch_size;
 	int epochs;
@@ -226,10 +228,12 @@ int MNIST_test(const char* MNIST_training_images, const char* MNIST_training_lab
 	label = lten::AllocateTensor({ static_cast<uint64_t>(batch_size), 1, 1, label_len }, nullptr);
 	input.set_autograd(true);
 
-	lten::SGDOptimizer optimizer; //lten::AdamOptimizer also works fine
+	lten::AdamOptimizer optimizer; //lten::SGDOptimizer also works fine
+	//lten::SGDOptimizer optimizer; 
 	optimizer.attach_network(net);
 	optimizer.set_learning_rate(lr);
 
+	net.train(true);
 
 	index = 0;
 	epochs = 1;
@@ -431,6 +435,7 @@ int MNIST_test_gpu(const char* MNIST_training_images, const char* MNIST_training
 	optimizer.set_learning_rate(lr);
 
 	net.to(lten::GPU);
+	net.train(true);
 
 	index = 0;
 	epochs = 1;
@@ -729,6 +734,7 @@ int quantized_MNIST_test(const char* MNIST_training_images, const char* MNIST_tr
 	optimizer.attach_network(net);
 	optimizer.set_learning_rate(lr);
 
+	net.train(true);
 
 	index = 0;
 	epochs = 10;

@@ -1,6 +1,5 @@
 #include <iostream>
-#include "tensor.h"
-#include "layers.h"
+#include "lten.h"
 #include "utils.h"
 
 //https://kratzert.github.io/2016/02/12/understanding-the-gradient-flow-through-the-batch-normalization-layer.html
@@ -78,7 +77,7 @@ namespace lten {
 
 		for (i = 0; i < naxes_; i++)
 		{
-			if (axes_[i] >= ndims_src)
+			if (axes_[i] >= static_cast<uint32_t>(ndims_src))
 			{
 				LTEN_ERR("Invalid index");
 			}

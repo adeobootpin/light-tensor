@@ -1,25 +1,9 @@
 #ifndef TENSOR_FNS_H
 #define TENSOR_FNS_H
 
-enum { MAX_DIMS = 16 };
-
 #include "offset_calc.h"
 
-typedef struct TAG_POINTER_ARRAYS
-{
-	void** a_array;
-	void** b_array;
-	void** c_array;
-	void* buffer;
-}POINTER_ARRAYS;
 
-typedef struct TAG_OFFSET_ARRAYS
-{
-	uint32_t* a_array;
-	uint32_t* b_array;
-	uint32_t* c_array;
-	void* buffer;
-}OFFSET_ARRAYS;
 
 
 #ifdef USE_OPENBLAS

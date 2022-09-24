@@ -1,5 +1,4 @@
-#include "tensor.h"
-#include "layers.h"
+#include "lten.h"
 #include "im_col.h"
 #include "utils.h"
 

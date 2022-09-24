@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <cstdint>
 #include <stdio.h>
+#include "lten.h"
 #include "utils.h"
 #include "globals.h"
 #include "error.h"

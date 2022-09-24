@@ -3,13 +3,6 @@
 
 int main(int argc, char* argv[])
 {
-	repeat_interleave_backward_test(); return 0;
-
-	lten::Tensor aa = lten::RandomTensor({ 2, 1, 8, 56, 56, 96 });
-	aa = aa.to(lten::GPU);
-	aa = aa.permute({ 3, 0, 1, 2, 4, 5 });
-
-
 	int ret;
 	int total_tests;
 	int total_tests_passed;
@@ -47,14 +40,15 @@ int main(int argc, char* argv[])
 		}
 	}
 
-  if(run_on_gpu)
-  {
-    printf("running unit tests on GPU\n");
-  }
-  else
-  {
-    printf("running unit tests on CPU\n");
-  }
+	if (run_on_gpu)
+	{
+		printf("running unit tests on GPU\n");
+	}
+	else
+	{
+		printf("running unit tests on CPU\n");
+	}
+
 	ret = add_test_1(run_on_gpu);
 	total_tests++;
 	if (ret)

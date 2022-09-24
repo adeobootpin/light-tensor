@@ -1,4 +1,4 @@
-#include "tensor.h"
+#include "lten.h"
 
 namespace lten {
 

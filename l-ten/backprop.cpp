@@ -1,5 +1,4 @@
-#include "tensorimpl.h"
-#include "layers.h"
+#include "lten.h"
 #include "im_col.h"
 #include "utils.h"
 
@@ -4074,7 +4073,7 @@ void transpose_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray
 
 			memcpy(strides, top_gradient_ptr->GetStrides(), sizeof(uint64_t) * ndims);
 
-			temp = strides[dim1];
+			temp = static_cast<uint32_t>(strides[dim1]);
 			strides[dim1] = strides[dim2];
 			strides[dim2] = temp;
 
@@ -4329,28 +4328,14 @@ void embedding_backwardxxx(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimAr
 template<typename Dtype>
 void layernorm_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
-	uint64_t N;
 	lten::LayerNorm* layer_norm;
 	int ndims;
-	bool broadcast_required;
 	lten::device device_type;
 	const uint64_t* dims_array_top;
-	const uint64_t* dims_array_wt;
-	const uint64_t* dims_array_bias;
-	const uint64_t* dims_array_btm;
-	const uint64_t* dims_array_op1;
-	MultiDimArray<Dtype>* operand1_md_array;
-	MultiDimArray<Dtype>* operand2_md_array;
 	lten::Tensor ln_grad;
 	lten::Tensor sd_grad;
 	lten::Tensor temp1_grad;
 	lten::Tensor mu_grad;
-	MultiDimArray<Dtype>* feeder_gradient_ptr;
-	int dim;
-	const uint64_t* dst_sizes;
-	const uint64_t* dst_strides;
-	uint64_t dim_size;
-	uint64_t ratio;
 	lten::TensorOps options;
 
 	layer_norm = static_cast<lten::LayerNorm*>(parent_ptr->misc_ptr1_);
@@ -4986,24 +4971,15 @@ template<typename Dtype>
 void repeat_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
 	int i;
-	int j;
-	int k;
 	Dtype val;
 	uint64_t numels_src;
 	uint64_t numels_tg;
-	int coordinate;
 	int ndims_src;
 	int ndims_tg;
-	uint64_t coarse_strides[MAX_DIMS];
-	int coarse_index;
-	int fine_index;
-	uint64_t coarse_offset;
-	uint64_t fine_offset;
 	uint64_t offset;
 	int nrepeats;
 	uint64_t unsqeezed_src_dims[MAX_DIMS];
 	uint32_t repeats[MAX_DIMS];
-	uint32_t repeat_strides[MAX_DIMS];
 	const uint64_t* tg_dims;
 	lten::device device_type;
 
@@ -5026,7 +5002,7 @@ void repeat_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dt
 	tg_dims = top_gradient_ptr->GetSizes();
 	for (i = 0; i < ndims_tg; i++)
 	{
-		repeats[i] = tg_dims[i] / unsqeezed_src_dims[i];
+		repeats[i] = static_cast<uint32_t>(tg_dims[i] / unsqeezed_src_dims[i]);
 	}
 
 	OffsetCalc_repeat_backwards offs(children_ptr_array[0]->get_strides(), top_gradient_ptr->GetStrides(), children_ptr_array[0]->get_sizes(), top_gradient_ptr->GetNDims(), children_ptr_array[0]->get_ndims(), repeats);
@@ -5147,8 +5123,8 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 
 
 	dims_src = bottom_gradient_ptr->GetSizes();
-	nrepeats = parent_ptr->misc1_;
-	dim = parent_ptr->misc2_;
+	nrepeats = static_cast<int>(parent_ptr->misc1_);
+	dim = static_cast<int>(parent_ptr->misc2_);
 	scratch = static_cast<uint32_t*>(parent_ptr->misc_ptr1_);
 
 	if (!scratch)
@@ -5163,8 +5139,8 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 	numels_src = top_gradient_ptr->GetNumels();
 	numels_dst = bottom_gradient_ptr->GetNumels();
 	
-
-	OffsetCalc_repeat_interleave offs_calc(strides_src, bottom_gradient_ptr->GetStrides(), cummulative_times, bottom_gradient_ptr->GetNDims(), dims_src[dim], dim);  // use dims_src[dim] here because nrepeats could be 1 (a.k.a boradcast mode) and the 'real' number of repreats is required for this call
+	//OffsetCalc_repeat_interleave(const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* cummulative_times, int ndims, int nrepeats, int dim)
+	OffsetCalc_repeat_interleave offs_calc(strides_src, bottom_gradient_ptr->GetStrides(), cummulative_times, bottom_gradient_ptr->GetNDims(), static_cast<int>(dims_src[dim]), dim);  // use dims_src[dim] here because nrepeats could be 1 (a.k.a boradcast mode) and the 'real' number of repreats is required for this call
 
 	uint32_t ofs = offs_calc.GetOffset(903168);
 
@@ -5176,7 +5152,7 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 		
 		for (u64i = 0; u64i < numels_src; u64i++)
 		{
-			dst_offset = offs_calc.GetOffset(u64i);
+			dst_offset = offs_calc.GetOffset(static_cast<uint32_t>(u64i));
 
 			dst[dst_offset] += src[u64i];
 		}
@@ -5201,13 +5177,13 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 			uint32_t stride;
 	
 
-			repeat_dim_dim = dims_src[dim];
+			repeat_dim_dim = static_cast<uint32_t>(dims_src[dim]);
 			repeat = cummulative_times[1]; // BUGBUG this will not work when repeat_dim_dim == 1!!!!
 
 			stride = 1;
 			for (int i = bottom_gradient_ptr->GetNDims() - 1; i > dim; i--)
 			{
-				stride *= dims_src[i];
+				stride *= static_cast<uint32_t>(dims_src[i]);
 			}
 
 			gpu_repeat_interleave_broadcast_backward(dst, src, numels_dst, numels_src, repeat_dim_dim, repeat, stride, &offs_calc); // special case for when all repeat values are the same (much faster)
@@ -5236,7 +5212,7 @@ void index_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dty
 	index_tensor = parent_ptr->misc_int_tensor_;
 
 	indices = (int*)index_tensor->get_data_ptr();
-	num_indices = index_tensor->get_numels();
+	num_indices = static_cast<uint32_t>(index_tensor->get_numels());
 
 	ndims_dst = bottom_gradient_ptr->GetNDims();
 	dims_dst = bottom_gradient_ptr->GetSizes();
@@ -5396,12 +5372,10 @@ template<typename Dtype>
 void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
 	lten::Pseudo_Einsum_1* pe;
-	void* permuted_a_buffer;
 	void* scratch_a_buffer;
 	void* scratch_c_buffer;
 	uint64_t dst_strides[MAX_DIMS];
 	int ndims;
-	int i;
 
 	int device_index;
 	lten::device device_type;
@@ -5418,13 +5392,13 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 	float alpha = 1.0f;
 	float beta = 0.0f;
 
-	uint64_t M;
-	uint64_t N;
-	uint64_t K;
+	//uint64_t M;
+	//uint64_t N;
+	//uint64_t K;
 
-	int lda;
-	int ldb;
-	int ldc;
+	//int lda;
+	//int ldb;
+	//int ldc;
 
 
 	if (lten::CPU == device_type)

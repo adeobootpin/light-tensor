@@ -31,9 +31,27 @@ SOFTWARE.
 #include <string>
 #include <vector>
 #include <stdlib.h>
+
+
 #include "math_fns.h"
 #include "error.h"
+#include "offset_calc.h"
 
+typedef struct TAG_POINTER_ARRAYS
+{
+	void** a_array;
+	void** b_array;
+	void** c_array;
+	void* buffer;
+}POINTER_ARRAYS;
+
+typedef struct TAG_OFFSET_ARRAYS
+{
+	uint32_t* a_array;
+	uint32_t* b_array;
+	uint32_t* c_array;
+	void* buffer;
+}OFFSET_ARRAYS;
 
 class md_array_dim_iterator
 {
@@ -190,7 +208,7 @@ public:
 	}
 #endif
 
-	const uint64_t GetNumels() const { return numels_; }
+	uint64_t GetNumels() const { return numels_; }
 	const uint64_t* GetSizes() const { return dims_array_; }
 	const uint64_t* GetStrides() const { return strides_array_; }
 	int GetNDims() const { return ndims_; }
@@ -1268,10 +1286,7 @@ public:
 		Dtype* dst;
 		Dtype* src;
 		int i;
-		int j;
-		uint64_t coordinate;
 		uint64_t src_offset;
-		uint64_t dst_offset;
 		int ndims;
 
 		ndims = nrepeats;
@@ -1299,11 +1314,6 @@ public:
 
 		for (i = 0; i < ndims; i++) // generate result dimesions
 		{
-			if (repeats[i] < 0)
-			{
-				LTEN_ERR("Repeat values must be greater than or equal to zero");
-			}
-
 			dims_result[i] = dims_src[i] * repeats[i];
 		}
 
@@ -1339,7 +1349,7 @@ public:
 
 			for (u64i = 0; u64i < numels; u64i++)
 			{
-				src_offset = offs_calc.GetOffsets(u64i);
+				src_offset = offs_calc.GetOffsets(static_cast<uint32_t>(u64i));
 
 				dst[u64i] = src[src_offset];
 			}
@@ -1416,11 +1426,7 @@ public:
 		uint64_t numels;
 		Dtype* src;
 		int i;
-		int j;
-		int k;
-		uint64_t coordinate;
 		uint64_t src_offset;
-		uint64_t dst_offset;
 		bool broadcast_mode;
 
 		if (dim >= ndims_)
@@ -1437,12 +1443,7 @@ public:
 
 		if (nrepeats == 1) // support broadcast syntax
 		{
-			if (repeats[0] < 0)
-			{
-				LTEN_ERR("Repeat values must be greater than or equal to zero");
-			}
-
-			nrepeats = dims_array_[dim];
+			nrepeats = static_cast<int>(dims_array_[dim]);
 			sum = repeats[0] * nrepeats;
 			broadcast_mode = true; // may not actually be true (if dims_array_[dim] is actually = 1) but no harm is done
 		}
@@ -1451,10 +1452,6 @@ public:
 			sum = 0;
 			for (i = 0; i < nrepeats; i++)
 			{
-				if (repeats[0] < 0)
-				{
-					LTEN_ERR("Repeat values must be greater than or equal to zero");
-				}
 				sum += repeats[i];
 			}
 			broadcast_mode = false;
@@ -1497,7 +1494,7 @@ public:
 
 			for (u64i = 0; u64i < numels; u64i++)
 			{
-				src_offset = offs_calc.GetOffset(u64i);
+				src_offset = offs_calc.GetOffset(static_cast<uint32_t>(u64i));
 
 				dst[u64i] = src[src_offset];
 			}

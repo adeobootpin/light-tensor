@@ -591,7 +591,6 @@ void einsum2_test()
 	lten::Tensor b;
 	lten::Tensor c;
 
-	cublasStatus_t status;
 	cublasHandle_t hCuBlas;
 
 	hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(0);
@@ -831,7 +830,7 @@ void einsum_fwd_bwd_test()
 	net.train(true);
 	
 	lten::AdamOptimizer optimizer;
-	optimizer.set_learning_rate(5 * 1e-2);
+	optimizer.set_learning_rate((float)(5.0 * 1e-2));
 	optimizer.attach_network(net);
 
 	net.to(lten::GPU);

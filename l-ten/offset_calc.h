@@ -208,13 +208,13 @@ struct OffsetCalc_mean_var
 		{
 			if ((bitmask_ & (1 << i)))
 			{
-				axes_strides_src[index_1] = strides_src[i];				
-				axes_dims[index_1] = dims_src[i];
+				axes_strides_src[index_1] = static_cast<uint32_t>(strides_src[i]);				
+				axes_dims[index_1] = static_cast<uint32_t>(dims_src[i]);
 				index_1++;
 			}
 			else
 			{
-				non_axis_strides_src[index_2++] = strides_src[i];
+				non_axis_strides_src[index_2++] = static_cast<uint32_t>(strides_src[i]);
 			}
 		}
 
@@ -248,7 +248,7 @@ struct OffsetCalc_mean_var
 		numels = 1;
 		for (i = naxes - 1; i >= 0; i--)
 		{
-			axes_srides[i] = numels;
+			axes_srides[i] = static_cast<uint32_t>(numels);
 			numels *= axes_dims[i];
 		}
 
@@ -424,7 +424,7 @@ struct OffsetCalc_mean_var_old
 		{
 			if ((bitmask_ & (1 << i)))
 			{
-				squashed_dims[index++] = dims_src[i];
+				squashed_dims[index++] = static_cast<uint32_t>(dims_src[i]);
 			}
 		}
 		assert(index == naxes); // sanity check
@@ -432,7 +432,7 @@ struct OffsetCalc_mean_var_old
 		numels = 1;
 		for (i = naxes - 1; i >= 0; i--)
 		{
-			squashed_strides_src_[i] = numels;
+			squashed_strides_src_[i] = static_cast<uint32_t>(numels);
 			numels *= squashed_dims[i];
 		}
 		
@@ -563,11 +563,11 @@ struct OffsetCalc_mean_std_simple
 		{
 			if ((bitmask & (1 << i)))
 			{
-				workspace_strides_[index2++] = strides_src[i];
+				workspace_strides_[index2++] = static_cast<uint32_t>(strides_src[i]);
 			}
 			else
 			{
-				squashed_strides_src_[index++] = strides_src[i];
+				squashed_strides_src_[index++] = static_cast<uint32_t>(strides_src[i]);
 			}
 		}
 
@@ -581,14 +581,14 @@ struct OffsetCalc_mean_std_simple
 		{
 			if ((bitmask & (1 << i)))
 			{
-				workspace_dims[index++] = dims_src[i];
+				workspace_dims[index++] = static_cast<uint32_t>(dims_src[i]);
 			}
 		}
 
 		numels = 1;
 		for (i = naxes - 1; i >= 0; i--)
 		{
-			workspace_pseudo_strides[i] = numels;
+			workspace_pseudo_strides[i] = static_cast<uint32_t>(numels);
 			numels *= workspace_dims[i];
 		}
 
@@ -788,10 +788,10 @@ struct OffsetCalc_repeat_backwards
 		//
 		// create 'coarse' strides array
 		//
-		coarse_strides_[ndims_src - 1] = unsqeezed_dst_dims[ndims_src - 1];
+		coarse_strides_[ndims_src - 1] = static_cast<uint32_t>(unsqeezed_dst_dims[ndims_src - 1]);
 		for (i = ndims_src - 2; i >= 0; i--)
 		{
-			coarse_strides_[i] = unsqeezed_dst_dims[i] * repeats[i + 1] * coarse_strides_[i + 1];
+			coarse_strides_[i] = static_cast<uint32_t>(unsqeezed_dst_dims[i]) * repeats[i + 1] * coarse_strides_[i + 1];
 		}
 
 		for (i = 0; i < ndims_dst; i++)

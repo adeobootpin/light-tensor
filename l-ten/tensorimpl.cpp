@@ -1,5 +1,5 @@
 #include <cmath>
-#include "tensorimpl.h"
+#include "lten.h"
 #include "utils.h"
 
 namespace lten {
@@ -1566,7 +1566,7 @@ namespace lten {
 		uint64_t dims_dst[MAX_DIMS];
 		int ndims_src;
 		int ndims_dst;
-		uint64_t bitmask;
+		uint32_t bitmask;
 		const uint64_t* dims_src;
 
 		ndims_src = operand1.get_ndims();
@@ -2039,7 +2039,8 @@ namespace lten {
 		if (operand1.autograd_on())
 		{
 			add_child(operand1);
-			grad_fn_ = nullptr; // so layer is 'skipped' during backprop for speed
+			//grad_fn_ = nullptr; // so layer is 'skipped' during backprop for speed
+			//grad_fn_ = ::reshape_backward;
 			set_autograd(true);
 		}
 

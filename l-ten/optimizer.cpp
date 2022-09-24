@@ -1,9 +1,6 @@
 #include <cmath>
 #include <string.h>
-#include "tensor.h"
-#include "layers.h"
-#include "net.h"
-#include "optimizer.h"
+#include "lten.h"
 #include "error.h"
 
 namespace lten {

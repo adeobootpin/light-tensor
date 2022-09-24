@@ -23,6 +23,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
+enum { MAX_DIMS = 16 };
 
 #include <string.h>
 #include "shared_pointer.h"
@@ -73,8 +74,9 @@ namespace lten {
 		virtual const uint64_t* get_sizes() { assert(0); return nullptr; }
 		virtual const uint64_t* get_strides() { assert(0); return nullptr; }
 		virtual int get_ndims() const { assert(0); return 0; }
-		virtual const uint64_t get_numels() { return 0; }
+		virtual uint64_t get_numels() { return 0; }
 		virtual void set_autograd(bool setting) { assert(0); }
+		virtual bool autograd_on() { assert(0); return false; }
 		virtual device get_device() { assert(0); return CPU; }
 		virtual int get_device_index() { assert(0);  return 0; }
 		virtual void backward(MultiDimArray<float>* top_gradient_ptr = nullptr) { assert(0); }
@@ -134,7 +136,7 @@ namespace lten {
 		virtual int get_ndims() const { return md_array_base_->GetNDims(); }
 		virtual const uint64_t* get_sizes() { return md_array_base_->GetSizes(); }
 		virtual const uint64_t* get_strides() { return md_array_base_->GetStrides(); }
-		virtual const uint64_t get_numels() { return md_array_base_->GetNumels(); }
+		virtual uint64_t get_numels() { return md_array_base_->GetNumels(); }
 		virtual void* get_data_ptr() { return md_array_base_->GetDataPtr(); }
 		virtual void set_autograd(bool setting) { autograd_on_ = setting; }
 		bool autograd_on() { return autograd_on_; }

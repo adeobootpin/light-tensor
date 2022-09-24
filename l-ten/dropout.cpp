@@ -1,8 +1,7 @@
 #include <random>
 #include <iostream>
 #include <climits>
-#include "tensor.h"
-#include "layers.h"
+#include "lten.h"
 #include "utils.h"
 
 

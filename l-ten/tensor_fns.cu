@@ -2,7 +2,9 @@
 #include <cstdint>
 #include <tuple>
 #include <stdio.h>
-#include "layers.h"
+#include <algorithm>
+#include "tensorimpl.h"
+#include "lten.h"
 #include "error.h"
 #include "utils.h"
 
@@ -245,7 +247,6 @@ __global__ void gpu_mean_any_axes_kernel(Dtype* dst, const Dtype* __restrict__ s
 	uint32_t partial_offset_dst;
 	float val;
 	int i;
-	int j;
 
 
 	offset_dst = (blockIdx.x * blockDim.x + threadIdx.x);
@@ -271,9 +272,7 @@ __global__ void gpu_mean_last_axis_only_kernel(Dtype* dst, const Dtype* src, con
 	uint32_t total_warps;
 	float val;
 	int i;
-	int j;
 
-	unsigned int tid = threadIdx.x;
 	int warpIdx = threadIdx.x / warpSize;
 	int laneIdx = threadIdx.x % warpSize;
 
@@ -394,22 +393,22 @@ void gpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels_dst, const uin
 	naxes = ndims_src - ndims_dst;
 	if (naxes > 1 || (axes[0] != ndims_src - 1))
 	{
-		int len;
-		int stride;
+		uint32_t len;
+		uint32_t stride;
 
 		len = 1;
 		for (i = 0; i < naxes; i++)
 		{
-			len *= dims_src[axes[i]];
+			len *= static_cast<uint32_t>(dims_src[axes[i]]);
 		}
 
 		scale = 1.0f / len;
 
 		if (naxes == 1 && !(strides_src[axes[0]] % vec_size))
 		{
-			stride = strides_src[axes[0]];
+			stride = static_cast<uint32_t>(strides_src[axes[0]]);
 
-			int batches = numels_dst / stride;
+			uint32_t batches = static_cast<uint32_t>(numels_dst) / stride;
 			int interleave = 4;
 
 			num_warps = interleave; // warps process every other interleave row
@@ -442,9 +441,9 @@ void gpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels_dst, const uin
 	}
 	else
 	{
-		int stride;
+		uint32_t stride;
 
-		stride = dims_src[ndims_src - 1];
+		stride = static_cast<uint32_t>(dims_src[ndims_src - 1]);
 
 		threads_per_block = GetNextPowerOf2(static_cast<int>(stride));
 		threads_per_block = min(threads_per_block, 512);
@@ -484,7 +483,7 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 	float n_ab;
 	float temp;
 	int i;
-	int warp_iterations;
+
 
 	int warpIdx = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // absolute thread id /  warpSize
 	int laneIdx = threadIdx.x % warpSize;
@@ -616,14 +615,14 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 template<typename Dtype>
 void gpu_var(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes)
 {
-	uint64_t len;
+	uint32_t len;
 	int naxes;
 	int i;
 	int num_blocks;
 	uint32_t threads_per_block;
 	float scale;
-	int warps_required;
-	int warps_per_block;
+	uint32_t warps_required;
+	uint32_t warps_per_block;
 
 	naxes = ndims_src - ndims_dst;
 
@@ -638,11 +637,11 @@ void gpu_var(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t
 		len = 1;
 		for (i = 0; i < naxes; i++)
 		{
-			len *= dims_src[axes[i]];
+			len *= static_cast<uint32_t>(dims_src[axes[i]]);
 		}
 
 
-		warps_required = numels; // one warp for each output (note: numels is dst numels)
+		warps_required = static_cast<uint32_t>(numels); // one warp for each output (note: numels is dst numels)
 		warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
 		threads_per_block = warps_per_block * CUDA_WARP_SIZE;
 		num_blocks = (warps_required + warps_per_block - 1)/ warps_per_block;
@@ -665,7 +664,6 @@ template<typename Dtype>
 __global__ void gpu_layer_norm_last_axis_only_kernel(Dtype* dst, const Dtype* src, const uint64_t numels, const uint32_t dim_len, float scale, Dtype* weight, Dtype* bias, Dtype* ln, Dtype* sd)
 {
 	uint32_t offset_src;
-	uint32_t offset_dst;
 	float count;
 	float count_b;
 	float mean;
@@ -826,14 +824,14 @@ __global__ void gpu_layer_norm_last_axis_only_kernel(Dtype* dst, const Dtype* sr
 template<typename Dtype>
 void gpu_layer_norm(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, Dtype* weight, Dtype* bias, Dtype* ln, Dtype* sd)
 {
-	uint64_t len;
+	uint32_t len;
 	int naxes;
 	int i;
 	int num_blocks;
 	uint32_t threads_per_block;
 	float scale;
-	int warps_required;
-	int warps_per_block;
+	uint32_t warps_required;
+	uint32_t warps_per_block;
 
 	naxes = ndims_src - ndims_dst;
 
@@ -847,10 +845,10 @@ void gpu_layer_norm(Dtype* dst, const Dtype* src, const uint64_t numels, const u
 		len = 1;
 		for (i = 0; i < naxes; i++)
 		{
-			len *= dims_src[axes[i]];
+			len *= static_cast<uint32_t>(dims_src[axes[i]]);
 		}
 
-		warps_required = numels / len; // one warp for each traversal along the axis
+		warps_required = static_cast<uint32_t>(numels) / len; // one warp for each traversal along the axis
 		warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
 		threads_per_block = warps_per_block * CUDA_WARP_SIZE;
 		num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
@@ -1105,7 +1103,7 @@ void gpu_transpose(const Dtype* A, Dtype* At, const uint64_t numels, const uint6
 	num_blocks = (static_cast<int>(N) + 256 - 1) / 256;
 
 
-	gpu_transpose_kernel << < num_blocks, defa_threads >> > ((float*)A, (float*)At, N, off_calc);
+	gpu_transpose_kernel << < num_blocks, defa_threads >> > ((float*)A, (float*)At, static_cast<int>(N), off_calc);
 
 }
 //-----------------------------------------------------------------------------------------------------
@@ -1170,7 +1168,7 @@ void gpu_repeat(Dtype* dst, const Dtype* src, uint64_t numels, const uint64_t* s
 
 	num_blocks = (static_cast<int>(N) + factor - 1) / factor; // allocate (1/vec_size) threads since vectorization kernel to be used
 
-	gpu_repeat_vectorized_kernel << < num_blocks, defa_threads >> > ((float*)dst, (float*)src, N, offs_calc);
+	gpu_repeat_vectorized_kernel << < num_blocks, defa_threads >> > ((float*)dst, (float*)src, static_cast<int>(N), offs_calc);
 
 }
 
@@ -1183,7 +1181,6 @@ __global__ void gpu_repeat_backward_vectorized_kernel(Dtype* dst, const Dtype* s
 	uint32_t j;
 	uint32_t offset;
 	uint32_t fine_index;
-	uint32_t fine_offset;
 	float4 src4;
 	float4 dst4;
 
@@ -1239,12 +1236,12 @@ __global__ void gpu_repeat_backward_kernel(Dtype* dst, const Dtype* src, uint64_
 template<typename Dtype>
 void gpu_repeat_backward(Dtype* dst, const Dtype* src, uint64_t numels_dst, uint64_t numels_src, const uint64_t* dims_src, int ndims_src, OffsetCalc_repeat_backwards* offs)
 {
-	int threads_required;
-	int warps_required;
-	int warps_per_block;
-	int num_blocks;
+	uint32_t threads_required;
+	uint32_t warps_required;
+	uint32_t warps_per_block;
+	uint32_t num_blocks;
 
-	threads_required = numels_dst;
+	threads_required = static_cast<uint32_t>(numels_dst);
 	warps_required = (threads_required + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
 	warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
 	num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
@@ -1301,7 +1298,7 @@ void gpu_repeat_interleave(Dtype* dst, const Dtype* src, const uint64_t numels, 
 
 	num_blocks = (static_cast<int>(N) + defa_threads - 1) / defa_threads;
 
-	gpu_repeat_interleave_kernel << < num_blocks, defa_threads >> > ((float*)dst, (float*)src, N, offs_calc);
+	gpu_repeat_interleave_kernel << < num_blocks, defa_threads >> > ((float*)dst, (float*)src, static_cast<int>(N), offs_calc);
 
 }
 
@@ -1393,15 +1390,15 @@ __global__ void gpu_repeat_interleave_backward_kernel(Dtype* dst, const Dtype* s
 template<typename Dtype>
 void gpu_repeat_interleave_broadcast_backward(Dtype* dst, const Dtype* src, uint64_t numels_dst, uint64_t numels_src, uint32_t repeat_dim_dim, uint32_t repeat, uint32_t stride, OffsetCalc_repeat_interleave* offs) // special case for when all repeat values are the same (much faster)
 {
-	int num_src_blocks;
-	int warps_per_src_bloc;
-	int warps_required;
-	int warps_per_block;
-	int num_blocks;
+	uint32_t num_src_blocks;
+	uint32_t warps_per_src_bloc;
+	uint32_t warps_required;
+	uint32_t warps_per_block;
+	uint32_t num_blocks;
 
 	cudaMemsetAsync(dst, 0, sizeof(Dtype) * numels_dst); // get this going now...
 
-	num_src_blocks = numels_src / repeat / stride;
+	num_src_blocks = static_cast<uint32_t>(numels_src) / repeat / stride;
 	warps_per_src_bloc = min(128, repeat); // <----------------tweak this for perf but make less than repeat
 	warps_required = num_src_blocks * warps_per_src_bloc;
 
@@ -1416,14 +1413,14 @@ void gpu_repeat_interleave_broadcast_backward(Dtype* dst, const Dtype* src, uint
 template<typename Dtype>
 void gpu_repeat_interleave_backward(Dtype* dst, const Dtype* src, uint64_t numels_dst, uint64_t numels_src, OffsetCalc_repeat_interleave* offs)
 {
-	int threads_required;
-	int warps_required;
-	int warps_per_block;
-	int num_blocks;
+	uint32_t threads_required;
+	uint32_t warps_required;
+	uint32_t warps_per_block;
+	uint32_t num_blocks;
 
 	cudaMemsetAsync(dst, 0, sizeof(Dtype) * numels_dst); // get this going now...
 
-	threads_required = numels_src;
+	threads_required = static_cast<uint32_t>(numels_src);
 	warps_required = (threads_required + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
 	warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
 	num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
@@ -1482,8 +1479,6 @@ template<typename Dtype>
 __global__ void gpu_index_backward_kernel(Dtype* dst, const Dtype* src, const int* indices, int num_indices, uint32_t copy_len)
 {
 	uint32_t thread_id;
-	uint32_t src_index;
-	uint32_t dst_index;
 	uint32_t index;
 	uint32_t i;
 	uint32_t j;
@@ -1514,12 +1509,12 @@ void gpu_index_backward(Dtype* dst, uint64_t numels_dst, const Dtype* src, const
 
 	cudaMemsetAsync(dst, 0, sizeof(Dtype) * numels_dst); // get this going now...
 
-	threads_required = num_indices * copy_len;
+	threads_required = num_indices * static_cast<int>(copy_len);
 	warps_required = (threads_required + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
 	warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
 	num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
 
-	gpu_index_backward_kernel << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (dst, src, indices, num_indices, copy_len);
+	gpu_index_backward_kernel << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (dst, src, indices, num_indices, static_cast<uint32_t>(copy_len));
 
 }
 //-----------------------------------------------------------------------------------------------------

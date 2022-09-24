@@ -27,6 +27,7 @@ SOFTWARE.
 
 #include "shared_pointer.h"
 #include "tensorimpl.h"
+#include "tensor_fns.h"
 
 namespace lten {
 
@@ -62,8 +63,9 @@ namespace lten {
 #endif	
 		void* get_data_ptr() { return smart_ptr_->get_data_ptr(); }
 		void* get_grad_ptr() { return smart_ptr_->get_grad_ptr(); }
-		const uint64_t get_numels() { return smart_ptr_->get_numels(); }
+		uint64_t get_numels() { return smart_ptr_->get_numels(); }
 		void set_autograd(bool setting) { smart_ptr_->set_autograd(setting); }
+		bool autograd_on() { return smart_ptr_->autograd_on(); }
 		const uint64_t* get_sizes() { return smart_ptr_->get_sizes(); }
 		const uint64_t* get_strides() { return smart_ptr_->get_strides(); }
 		void backward(MultiDimArray<float>* top_gradient = nullptr) { smart_ptr_->backward(top_gradient); }
@@ -200,11 +202,12 @@ namespace lten {
 
 		Tensor index(const Tensor& index)
 		{
-			const uint64_t* dims_ptr;
 			dtype data_type;
-			dims_ptr = smart_ptr_->get_sizes();
 
 			/*
+			const uint64_t* dims_ptr;	
+			dims_ptr = smart_ptr_->get_sizes();
+			
 			if (index >= dims_ptr[0])
 			{
 				LTEN_ERR("Index out of range");

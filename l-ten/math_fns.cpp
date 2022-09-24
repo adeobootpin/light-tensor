@@ -2,9 +2,9 @@
 #include <iostream>
 #include <assert.h>
 #include <cmath>
+#include "lten.h"
 #include "threadpool2.h"
 #include "math_fns.h"
-#include "tensorimpl.h"
 
 template<typename Dtype>
 void cpu_axpy(uint64_t N, Dtype alpha, Dtype* X_ptr, Dtype* Y_ptr, Dtype* C_ptr)
@@ -312,18 +312,12 @@ void cpu_sum_backward(Dtype* dst, const Dtype* src, const uint64_t numels, const
 template<typename Dtype>
 void cpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes)
 {
-	uint64_t offset_src_save;
-	uint64_t offset_src;
 	uint64_t offset_dst;
 	uint64_t u64i;
 	int i;
-	uint32_t j;
 	uint64_t len;
-	int ndims;
 	Dtype sum;
-	uint64_t stride;
 	int naxes;
-	uint32_t coordinate;
 	
 	
 	OffsetCalc_mean_var offs_calc(strides_dst, strides_src, ndims_dst, ndims_src, dims_src, axes);
@@ -348,7 +342,7 @@ void cpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_
 
 		for (u64i = 0; u64i < len; u64i++)
 		{
-			sum += src[offs_calc.GetSrcOffset(offset_dst, u64i)];
+			sum += src[offs_calc.GetSrcOffset(static_cast<uint32_t>(offset_dst), static_cast<uint32_t>(u64i))];
 		}
 
 		dst[offset_dst] = sum / static_cast<Dtype>(len);

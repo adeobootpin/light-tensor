@@ -1,5 +1,5 @@
 #include <iostream>
-#include "tensor.h"
+#include "lten.h"
 /*
 MIT License
 

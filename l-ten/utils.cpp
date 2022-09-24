@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <cmath>
-#include "tensor.h"
+#include "lten.h"
 #include "error.h"
 #include "utils.h"
 
