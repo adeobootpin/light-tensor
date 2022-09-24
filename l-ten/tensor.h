@@ -66,6 +66,7 @@ namespace lten {
 		uint64_t get_numels() { return smart_ptr_->get_numels(); }
 		void set_autograd(bool setting) { smart_ptr_->set_autograd(setting); }
 		bool autograd_on() { return smart_ptr_->autograd_on(); }
+		void set_parameter(bool setting) { smart_ptr_->set_parameter(setting); }
 		const uint64_t* get_sizes() { return smart_ptr_->get_sizes(); }
 		const uint64_t* get_strides() { return smart_ptr_->get_strides(); }
 		void backward(MultiDimArray<float>* top_gradient = nullptr) { smart_ptr_->backward(top_gradient); }

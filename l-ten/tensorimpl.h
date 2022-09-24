@@ -76,6 +76,7 @@ namespace lten {
 		virtual int get_ndims() const { assert(0); return 0; }
 		virtual uint64_t get_numels() { return 0; }
 		virtual void set_autograd(bool setting) { assert(0); }
+		virtual void set_parameter(bool setting) { assert(0); }
 		virtual bool autograd_on() { assert(0); return false; }
 		virtual device get_device() { assert(0); return CPU; }
 		virtual int get_device_index() { assert(0);  return 0; }
@@ -139,6 +140,7 @@ namespace lten {
 		virtual uint64_t get_numels() { return md_array_base_->GetNumels(); }
 		virtual void* get_data_ptr() { return md_array_base_->GetDataPtr(); }
 		virtual void set_autograd(bool setting) { autograd_on_ = setting; }
+		virtual void set_parameter(bool setting) { is_parameter_ = setting; }
 		bool autograd_on() { return autograd_on_; }
 		void set_grad_fn(void(*grad_fn)(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, TensorImpl** children_ptr_array, int child_index, TensorImpl* parent_ptr)) { grad_fn_ = grad_fn; }
 		virtual void* get_grad_ptr() { if (!gradient_ptr_) return nullptr;  return gradient_ptr_->GetDataPtr(); }
@@ -224,6 +226,7 @@ namespace lten {
 		MultiDimArray<Dtype>* md_array_base_ = nullptr;
 		MultiDimArray<Dtype>* gradient_ptr_ = nullptr;
 		bool autograd_on_;
+		bool is_parameter_; // network params (i.e. weights/biases)
 		device device_;
 		int device_index_;
 		dtype data_type_;
@@ -240,6 +243,7 @@ namespace lten {
 		void reset()
 		{
 			autograd_on_ = false;
+			is_parameter_ = false;
 			data_type_ = FLOAT32;
 			device_ = CPU;
 			device_index_ = 0;
