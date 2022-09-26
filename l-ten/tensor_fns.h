@@ -61,4 +61,11 @@ void set_addresses(Dtype* A, Dtype* B, Dtype* C, POINTER_ARRAYS* addresses, cons
 template<typename Dtype>
 void gpu_layer_norm_backwards(void* vlayer_norm, Dtype* x, Dtype* top_gradient, Dtype* bottom_gradient);
 
+template<typename Dtype>
+void gpu_gelu(Dtype* dst, Dtype* src, uint64_t len);
+
+template<typename Dtype>
+void gpu_gelu_backward(Dtype* bottom_gradient, const Dtype* top_gradient, const Dtype* src, uint64_t len);
+
+
 #endif // TENSOR_FNS_H

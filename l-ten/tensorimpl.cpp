@@ -2039,7 +2039,7 @@ namespace lten {
 		if (operand1.autograd_on())
 		{
 			add_child(operand1);
-			//grad_fn_ = nullptr; // so layer is 'skipped' during backprop for speed
+			grad_fn_ = nullptr; // so layer is 'skipped' during backprop for speed
 			//grad_fn_ = ::reshape_backward;
 			set_autograd(true);
 		}

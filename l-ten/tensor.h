@@ -1728,7 +1728,7 @@ namespace lten {
 		// Note: nrepeats can be extremely large
 		// Optional buffer scratch, if provided should be of size nrepeats + 1
 		// It will be used to store the cummulative repeats array (see md_array repeat_interleave funs)
-		// Note: if backward processing is required, scratch *must* point to memory that is valid during backward processing
+		// Note: if backward processing is required, scratch *must* point to host memory that is valid during backward processing
 		// Note: when using broadcast mode, scratch, if provided should be of size dims[dim] + 1 (i.e. actual number of repeats + 1)
 
 		Tensor repeat_interleave(uint32_t repeat, int dim, uint32_t* scratch = nullptr) // broadcast version of function (repeat is broadcast to all 'rows' of dim)

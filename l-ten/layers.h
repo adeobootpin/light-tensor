@@ -1079,6 +1079,7 @@ namespace lten {
 	};
 
 	Tensor relu(Tensor& input);
+	Tensor gelu(Tensor& input);
 	Tensor softmax(Tensor& input, int dim = 1);
 	Tensor log_softmax(Tensor& input, int dim = 1);
 	Tensor mse_loss(Tensor& input, Tensor& target);

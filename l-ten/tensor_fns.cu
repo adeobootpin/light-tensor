@@ -1615,6 +1615,73 @@ void gpu_permute(Dtype* dst, const Dtype* src, int ndims, const uint64_t numels,
 
 
 
+//-----------------------------------------------------------------------------------------------------
+//
+// gelu functions
+//
+//-----------------------------------------------------------------------------------------------------
+template<typename Dtype>
+__global__ void gpu_gelu_kernel(Dtype* dst, Dtype* src, unsigned int len)
+{
+	int i;
+
+	i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < len)
+	{
+		dst[i] = src[i] * (0.5f * (1.0f + std::erf(src[i] / sqrt(2.0f))));
+
+		// approximation
+		//float tt = sqrt(2.0f / 3.1415926535897932384626433832795f) * (src[i] + 0.044715f * (src[i] * src[i] * src[i]));
+		//dst[i] = 0.5f * src[i] * (1 + tanh(tt));
+	}
+
+}
+
+template<typename Dtype>
+void gpu_gelu(Dtype* dst, Dtype* src, uint64_t len)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(len) + 512 - 1) / 512;
+
+	gpu_gelu_kernel << <num_blocks, 512 >> > (dst, src, (unsigned int)len);
+
+}
+
+
+
+template<typename Dtype>
+__global__ void gpu_gelu_backward_kernel(Dtype* bottom_gradient, const Dtype* top_gradient, const Dtype* src, unsigned int len)
+{
+	int i;
+
+	i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < len)
+	{
+		float pdf;
+
+		pdf = 1.0f / sqrt(2.0f * 3.1415926535897932384626433832795f);
+		pdf *= expf(-0.5 * src[i] * src[i]);
+
+		bottom_gradient[i] = (0.5f * (1.0f + std::erf(src[i] / sqrt(2.0f)))) + src[i] * pdf;
+		bottom_gradient[i] *= top_gradient[i];
+
+		printf("bottom_gradient = %f top_gradient = %f, src = %f\n", bottom_gradient[i], top_gradient[i], src[i]);
+	}
+
+}
+
+template<typename Dtype>
+void gpu_gelu_backward(Dtype* bottom_gradient, const Dtype* top_gradient, const Dtype* src, uint64_t len)
+{
+	int num_blocks;
+
+	num_blocks = (static_cast<int>(len) + 512 - 1) / 512;
+
+	gpu_gelu_backward_kernel << <num_blocks, 512 >> > (bottom_gradient, top_gradient, src, (unsigned int)len);
+}
 
 //-----------------------------------------------------------------------------------------------------
 //
@@ -1717,3 +1784,13 @@ template void set_addresses<uint8_t>(uint8_t* A, uint8_t* B, uint8_t* C, POINTER
 template void gpu_layer_norm_backwards<float>(void* vlayer_norm, float* x, float* top_gradient, float* bottom_gradient);
 template void gpu_layer_norm_backwards<int>(void* vlayer_norm, int* x, int* top_gradient, int* bottom_gradient);
 template void gpu_layer_norm_backwards<uint8_t>(void* vlayer_norm, uint8_t* x, uint8_t* top_gradient, uint8_t* bottom_gradient);
+
+
+template void gpu_gelu<float>(float* dst, float* src, uint64_t len);
+template void gpu_gelu<int>(int* dst, int* src, uint64_t len);
+template void gpu_gelu<uint8_t>(uint8_t* dst, uint8_t* src, uint64_t len);
+
+
+template void gpu_gelu_backward<float>(float* bottom_gradient, const float* top_gradient, const float* src, uint64_t len);
+template void gpu_gelu_backward<int>(int* bottom_gradient, const int* top_gradient, const int* src, uint64_t len);
+template void gpu_gelu_backward<uint8_t>(uint8_t* bottom_gradient, const uint8_t* top_gradient, const uint8_t* src, uint64_t len);

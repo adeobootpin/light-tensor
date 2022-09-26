@@ -66,6 +66,63 @@ namespace lten {
 	}
 
 
+	Tensor gelu(Tensor& input)
+	{
+		uint64_t len;
+		uint64_t i;
+		TensorOps options;
+		float* src;
+		float* dst;
+
+		TensorImpl<float>* resultImpl;
+		resultImpl = new TensorImpl<float>;
+		intrusive_ptr<TensorImplBase> result(resultImpl);
+
+		options.data_type = input.get_data_type();
+		options.device_index = input.get_device_index();
+		options.device_type = input.get_device();
+
+		resultImpl->allocate(input.get_sizes(), input.get_ndims(), &options);
+
+		len = input.get_numels();
+		src = static_cast<float*>(input.get_data_ptr());
+		dst = static_cast<float*>(resultImpl->get_data_ptr());
+
+		if (CPU == options.device_type)
+		{
+			for (i = 0; i < len; i++)
+			{
+				dst[i] = src[i] * (0.5f * (1.0f + std::erf(src[i] / sqrt(2.0f))));
+
+				// approximation
+				//float tt = sqrt(2.0f / 3.1415926535897932384626433832795f) * (src[i] + 0.044715f * (src[i] * src[i] * src[i]));
+				//dst[i] = 0.5f * src[i] * (1 + tanh(tt));
+			}
+		}
+		else
+		{
+			if (GPU == options.device_type)
+			{
+#ifdef USE_CUDA
+				gpu_gelu(dst, src, len);
+#else
+				LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+			}
+			else
+			{
+				LTEN_ERR("Invalid tensor device type");
+			}
+		}
+
+		resultImpl->add_child(*(static_cast<TensorImpl<float>*>(input.get_smart_ptr().get_real_object())));
+		resultImpl->set_grad_fn(gelu_backward);
+		resultImpl->set_autograd(true);
+
+		return Tensor(result);
+	}
+
+
 	Tensor softmax(Tensor& input, int dim)
 	{
 		Tensor exps;
