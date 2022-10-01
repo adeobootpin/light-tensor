@@ -196,8 +196,9 @@ namespace lten {
 		// store gradients only for leaf nodes and only those that want it
 		// or tensors appearing multiple times on the computational graph
 		// (such tensors need to accumulate gradients and then backprop only once, preventing exponential growth of backward call tree)
-		if ((!num_children_ && autograd_on_) || accumulate_gradients_)
-		//if ((!num_children_) || accumulate_gradients_)
+		if (accumulate_gradients_ || auto_accumulate_gradients_)
+		//if ((!num_children_ && autograd_on_) || auto_accumulate_gradients_)
+		//if ((!num_children_) || auto_accumulate_gradients_)
 		{
 			if (!gradient_ptr_)
 			{
@@ -365,10 +366,10 @@ namespace lten {
 				children_[i]->do_backward(bottom_gradient);
 			}
 
-			if (accumulate_gradients_)
+			if (auto_accumulate_gradients_)
 			{
 				//::FillBuffer<Dtype>(gradient_ptr_->GetDataPtr(), gradient_ptr_->GetNumels(), 0);
-				accumulate_gradients_ = false;
+				auto_accumulate_gradients_ = false;
 			}
 		}
 	}
@@ -385,7 +386,7 @@ namespace lten {
 		graph_ref_count_++;
 		if (graph_ref_count_ == 2)
 		{
-			accumulate_gradients_ = true;
+			auto_accumulate_gradients_ = true;
 		}
 
 		if (graph_ref_count_ == 1)
@@ -919,9 +920,17 @@ void mul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 		if (device_type == lten::GPU)
 		{
 #ifdef USE_CUDA
-			ZeroMemoryOnGPU(bottom_gradient_ptr->GetDataPtr(), sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
 			if (child_index == 0) // operand 1
 			{
+				if (broadcast_required)
+				{
+				}
+				else
+				{
+					gpu_mul_backward(bottom_gradient_ptr->GetNumels(), operand2_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr());
+				}
+
+				/*
 				const uint64_t* dims_array_btm;
 				dims_array_btm = bottom_gradient_ptr->GetSizes();
 
@@ -940,9 +949,20 @@ void mul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 						dims_array_op2[ndims - 2], dims_array_op2[ndims - 1],
 						dims_array_btm[ndims - 2], dims_array_btm[ndims - 1]);
 				}
+				*/
 			}
 			else
 			{
+				if (broadcast_required)
+				{
+				}
+				else
+				{
+					gpu_mul_backward(bottom_gradient_ptr->GetNumels(), operand1_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr());
+				}
+
+				/*
+				ZeroMemoryOnGPU(bottom_gradient_ptr->GetDataPtr(), sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
 				assert(child_index == 1);
 
 				const uint64_t* dims_array_btm;
@@ -963,6 +983,7 @@ void mul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 						dims_array_op1[ndims - 2], dims_array_op1[ndims - 1],
 						dims_array_btm[ndims - 2], dims_array_btm[ndims - 1]);
 				}
+				*/
 			}
 #else
 			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
@@ -2470,9 +2491,9 @@ void gelu_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtyp
 			float pdf;
 
 			pdf = 1.0f / sqrt(2.0f * 3.1415926535897932384626433832795f);
-			pdf *= expf(-0.5 * op1_data[i] * op1_data[i]);
+			pdf *= expf(-0.5f * op1_data[i] * op1_data[i]);
 
-			bottom_data[i] = (0.5f * (1.0f + std::erf(op1_data[i] / sqrt(2.0f)))) + op1_data[i] * pdf;
+			bottom_data[i] = static_cast<Dtype>((0.5f * (1.0f + std::erf(op1_data[i] / sqrt(2.0f)))) + op1_data[i] * pdf);
 			bottom_data[i] *= top_data[i];
 		}
 	}
@@ -5434,16 +5455,16 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 
 	hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(device_index);
 
+	int M, N, K;
+	int lda;
+	int ldb;
+	int ldc;
+	int stride_a;
+	int stride_b;
+	int stride_c;
+
 	float alpha = 1.0f;
 	float beta = 0.0f;
-
-	//uint64_t M;
-	//uint64_t N;
-	//uint64_t K;
-
-	//int lda;
-	//int ldb;
-	//int ldc;
 
 
 	if (lten::CPU == device_type)
@@ -5471,8 +5492,24 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 		gpu_permute((Dtype*)scratch_c_buffer, top_gradient_ptr->GetDataPtr(), ndims, top_gradient_ptr->GetNumels(), dst_strides, top_gradient_ptr->GetStrides(), tg_permutations);
 
 
+		const uint64_t* A_sizes = children_ptr_array[0]->get_mdarray()->GetSizes();
+		const uint64_t* B_sizes = children_ptr_array[1]->get_mdarray()->GetSizes();
+		const uint64_t* C_sizes = top_gradient_ptr->GetSizes();
+
+		M = B_sizes[2];
+		N = children_ptr_array[0]->get_mdarray()->GetNumels() / (A_sizes[4] * A_sizes[5]);
+		K = B_sizes[1];
+		lda = B_sizes[2];
+		ldb = B_sizes[1];
+		ldc = M;
+		stride_a = B_sizes[1] * B_sizes[2];
+		stride_b = A_sizes[0] * A_sizes[1] * A_sizes[2] * B_sizes[0] * B_sizes[1];
+		stride_c = N * A_sizes[5];
+
 		scratch_a_buffer = pe->get_scratch_a_buffer(); // use scratch_a_buffer since same size as A gradient
-		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, 96, 896, 7, &alpha, (float*)children_ptr_array[1]->get_mdarray()->GetDataPtr(), 96, 7 * 96, (float*)scratch_c_buffer, 7, 6272, &beta, (float*)scratch_a_buffer, 96, 86016, 56);
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, M, N, K, &alpha, (float*)children_ptr_array[1]->get_mdarray()->GetDataPtr(), lda, stride_a, (float*)scratch_c_buffer, ldb, stride_b, &beta, (float*)scratch_a_buffer, ldc, stride_c, B_sizes[0]);
+		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, 96, 896, 7, &alpha, (float*)children_ptr_array[1]->get_mdarray()->GetDataPtr(), 96, 7 * 96, (float*)scratch_c_buffer, 7, 6272, &beta, (float*)scratch_a_buffer, 96, 86016, 56);
+		
 
 
 		//
@@ -5492,9 +5529,25 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 
 		void* permuted_a_buffer;
 
+		const uint64_t* A_sizes = children_ptr_array[0]->get_mdarray()->GetSizes();
+		const uint64_t* B_sizes = children_ptr_array[1]->get_mdarray()->GetSizes();
+		const uint64_t* C_sizes = top_gradient_ptr->GetSizes();
+
+
+		M = B_sizes[2];
+		N = B_sizes[1];
+		K = children_ptr_array[0]->get_mdarray()->GetNumels() / (A_sizes[4] * A_sizes[5]); 
+		lda = B_sizes[2];
+		ldb = B_sizes[1];
+		ldc = M;
+		stride_a = children_ptr_array[0]->get_mdarray()->GetNumels() / A_sizes[4];
+		stride_b = A_sizes[0] * A_sizes[1] * A_sizes[2] * B_sizes[0] * B_sizes[1];
+		stride_c = B_sizes[1] * B_sizes[2];
+
 		permuted_a_buffer = pe->get_permuted_a_buffer();
 		scratch_c_buffer = pe->get_scratch_c_buffer(); // scratch_c_buffer should already have permuted top_gradient from A.backward
-		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_T, 96, 7, 896, &alpha, (float*)permuted_a_buffer, 96, 86016, (float*)scratch_c_buffer, 7, 6272, &beta, (float*)bottom_gradient_ptr->GetDataPtr(), 96, 672, 56);
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_T, M, N, K, &alpha, (float*)permuted_a_buffer, lda, stride_a, (float*)scratch_c_buffer, ldb, stride_b, &beta, (float*)bottom_gradient_ptr->GetDataPtr(), ldc, stride_c, B_sizes[0]);
+		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_T, 96, 7, 896, &alpha, (float*)permuted_a_buffer, 96, 86016, (float*)scratch_c_buffer, 7, 6272, &beta, (float*)bottom_gradient_ptr->GetDataPtr(), 96, 672, 56);
 	}
 
 }

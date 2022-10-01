@@ -76,8 +76,9 @@ namespace lten {
 		virtual int get_ndims() const { assert(0); return 0; }
 		virtual uint64_t get_numels() { return 0; }
 		virtual void set_autograd(bool setting) { assert(0); }
-		virtual void set_parameter(bool setting) { assert(0); }
 		virtual bool autograd_on() { assert(0); return false; }
+		virtual void set_accumulate_gradients(bool setting) { assert(0); }
+		virtual bool accumulates_gradients() { assert(0); return false; }
 		virtual device get_device() { assert(0); return CPU; }
 		virtual int get_device_index() { assert(0);  return 0; }
 		virtual void backward(MultiDimArray<float>* top_gradient_ptr = nullptr) { assert(0); }
@@ -140,8 +141,9 @@ namespace lten {
 		virtual uint64_t get_numels() { return md_array_base_->GetNumels(); }
 		virtual void* get_data_ptr() { return md_array_base_->GetDataPtr(); }
 		virtual void set_autograd(bool setting) { autograd_on_ = setting; }
-		virtual void set_parameter(bool setting) { is_parameter_ = setting; }
 		bool autograd_on() { return autograd_on_; }
+		virtual void set_accumulate_gradients(bool setting) { accumulate_gradients_ = setting; if (setting) autograd_on_ = setting; }
+		virtual bool accumulates_gradients() { return accumulate_gradients_; }
 		void set_grad_fn(void(*grad_fn)(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, TensorImpl** children_ptr_array, int child_index, TensorImpl* parent_ptr)) { grad_fn_ = grad_fn; }
 		virtual void* get_grad_ptr() { if (!gradient_ptr_) return nullptr;  return gradient_ptr_->GetDataPtr(); }
 		virtual device get_device() { return device_; }
@@ -225,8 +227,8 @@ namespace lten {
 	private:
 		MultiDimArray<Dtype>* md_array_base_ = nullptr;
 		MultiDimArray<Dtype>* gradient_ptr_ = nullptr;
-		bool autograd_on_;
-		bool is_parameter_; // network params (i.e. weights/biases)
+		bool autograd_on_; // set to true to participate in gradient calculations along computational graph (automatically gets set when accumulate_gradients_ is set)
+		bool accumulate_gradients_; // set true to accumulate gradients in a tensor (true for weights & biases by default), automatically sets autograd_on_ to true (note: does not automatically unset autograd_on_ when set to false)
 		device device_;
 		int device_index_;
 		dtype data_type_;
@@ -234,7 +236,7 @@ namespace lten {
 
 		enum { MAX_CHILDREN = 2 };
 		int num_children_;
-		bool accumulate_gradients_;
+		bool auto_accumulate_gradients_;  // gets turned on and off automatically whenever backward processing can be made more efficient by short-circuiting the graph (not manually settable unlike accumulate_gradients_)
 		TensorImpl* children_[MAX_CHILDREN];
 		intrusive_ptr<TensorImpl>* children_lock_[MAX_CHILDREN];
 
@@ -243,13 +245,13 @@ namespace lten {
 		void reset()
 		{
 			autograd_on_ = false;
-			is_parameter_ = false;
+			accumulate_gradients_ = false;
 			data_type_ = FLOAT32;
 			device_ = CPU;
 			device_index_ = 0;
 			num_children_ = 0;
 			graph_ref_count_ = 0;
-			accumulate_gradients_ = false;
+			auto_accumulate_gradients_ = false;
 			gradient_ptr_ = nullptr;
 			grad_fn_ = nullptr;
 			//name_[0] = '\0';

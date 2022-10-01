@@ -346,7 +346,6 @@ namespace lten {
 
 		TensorImpl<float>* resultImpl;
 		uint64_t result_dims[MAX_DIMS] = { 2, 1, 8, 56, 56, 7 };
-		uint64_t permuted_result_dims[MAX_DIMS] = { 56, 2, 8, 56, 1, 1, 7 };
 		uint32_t permutations_a[MAX_DIMS] = { 3, 0, 1, 2, 4, 5, 6 };
 		uint32_t permutations_c[MAX_DIMS] = { 1, 2, 0, 3, 4, 5, 6 };
 		uint64_t permuted_dims_a[MAX_DIMS];
@@ -365,6 +364,16 @@ namespace lten {
 		{
 			LTEN_ERR("Pseudo_Einsum_1 expects A to have 6 dimensions");
 		}
+		if (B.get_ndims() != 3)
+		{
+			LTEN_ERR("Pseudo_Einsum_1 expects A to have 3 dimensions");
+		}
+
+		const uint64_t* A_sizes = A.get_sizes();
+		const uint64_t* B_sizes = B.get_sizes();
+
+		memcpy(result_dims, A_sizes, sizeof(uint64_t) * (ndims - 1));
+		result_dims[ndims - 1] = B_sizes[B.get_ndims() - 2];
 
 		//
 		//A = A.unsqueeze(5);
@@ -417,7 +426,13 @@ namespace lten {
 
 		gpu_permute((float*)permuted_a_buffer_, unsqueezed_a.GetDataPtr(), ndims, unsqueezed_a.GetNumels(), permuted_strides_a, unsqueezed_a.GetStrides(), permutations_a);
 
-
+		int M, N, K;
+		int lda;
+		int ldb;
+		int ldc;
+		int stride_a;
+		int stride_b;
+		int stride_c;
 		float alpha = 1.0f;
 		float beta = 0.0f;
 
@@ -426,11 +441,30 @@ namespace lten {
 
 		hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(0);
 
-		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, 7, 896, 96, &alpha, (float*)B.get_data_ptr(), 96, 672, (float*)permuted_a_buffer_, 96, 86016, &beta, (float*)scratch_c_buffer_, 7, 6272, 56);
+		M = B_sizes[1];
+		N = A.get_numels() / (A_sizes[4] * A_sizes[5]);
+		K = A_sizes[5];
+		lda = A_sizes[5];
+		ldb = lda;
+		ldc = M;
+		stride_a = B_sizes[1] * B_sizes[2];
+		stride_b = N * A_sizes[5];
+		stride_c = A_sizes[0] * A_sizes[1] * A_sizes[2] * B_sizes[0] * B_sizes[1];
+
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, M, N, K, &alpha, (float*)B.get_data_ptr(), lda, stride_a, (float*)permuted_a_buffer_, ldb, stride_b, &beta, (float*)scratch_c_buffer_, ldc, stride_c, B_sizes[0]);
+		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, 7, 896, 96, &alpha, (float*)B.get_data_ptr(), 96, 672, (float*)permuted_a_buffer_, 96, 86016, &beta, (float*)scratch_c_buffer_, 7, 6272, 56);
 
 
-		MultiDimArray<float> temp;
-		temp.Allocate({ 56, 2, 8, 56, 1, 1, 7 }, (float*)scratch_c_buffer_, false);
+		uint64_t temp_dims[7];
+		temp_dims[0] = A_sizes[3];
+		temp_dims[1] = A_sizes[0] * A_sizes[1];
+		temp_dims[2] = A_sizes[2];
+		temp_dims[3] = A_sizes[4];
+		temp_dims[4] = 1;
+		temp_dims[5] = 1;
+		temp_dims[6] = B_sizes[1];
+		MultiDimArray<float> temp;		
+		temp.Allocate(temp_dims, 7, (float*)scratch_c_buffer_, false); //temp.Allocate({ 56, 2, 8, 56, 1, 1, 7 }, (float*)scratch_c_buffer_, false);
 		uint64_t permuted_strides_c[MAX_DIMS];
 		
 		GetPermutationStridesAndeDims(temp.GetSizes(), nullptr, permuted_strides_c, permutations_c, ndims);
@@ -475,12 +509,32 @@ namespace lten {
 		uint32_t result_permutation[] = { 1, 2, 3, 4, 0, 5 }; // TODO set this up dynamically (move 0 to desired location and slide rest left)
 		int i;
 
+
+		ndims = A.get_ndims();
+
+		if (ndims != 6)
+		{
+			LTEN_ERR("Pseudo_Einsum_1 expects A to have 6 dimensions");
+		}
+		if (B.get_ndims() != 3)
+		{
+			LTEN_ERR("Pseudo_Einsum_1 expects A to have 3 dimensions");
+		}
+
+		const uint64_t* A_sizes = A.get_sizes();
+		const uint64_t* B_sizes = B.get_sizes();
+
+		scratch_dims[0] = B_sizes[0];
+		scratch_dims[1] = A_sizes[0];
+		scratch_dims[2] = A_sizes[1];
+		scratch_dims[3] = A_sizes[2];
+		scratch_dims[4] = A_sizes[3];
+		scratch_dims[5] = B_sizes[1];
+
+
 		options.data_type = A.get_data_type();
 		options.device_index = A.get_device_index();
 		options.device_type = A.get_device();
-
-
-		ndims = A.get_ndims();
 
 		numels = 1;
 		for (i = 0; i < ndims; i++)
@@ -507,6 +561,13 @@ namespace lten {
 
 		scratch.allocate_from_buffer(scratch_dims, ndims, scratch_buffer_, false);
 
+		int M, N, K;
+		int lda;
+		int ldb;
+		int ldc;
+		int stride_a;
+		int stride_b;
+		int stride_c;
 		float alpha = 1.0f;
 		float beta = 0.0f;
 
@@ -515,7 +576,18 @@ namespace lten {
 
 		hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(0);
 
-		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, 7, 896, 96, &alpha, (float*)B.get_data_ptr(), 96, 672, (float*)A.get_data_ptr(), 5376, 96, &beta, (float*)scratch_buffer_, 7, 6272, 56);
+		M = B_sizes[1];
+		N = A.get_numels() / (A_sizes[4] * A_sizes[5]);
+		K = A_sizes[5];
+		lda = A_sizes[5];
+		ldb = A_sizes[4] * A_sizes[5];
+		ldc = M;
+		stride_a = B_sizes[1] * B_sizes[2];
+		stride_b = A_sizes[5];
+		stride_c = A_sizes[0] * A_sizes[1] * A_sizes[2] * B_sizes[0] * B_sizes[1];
+
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, M, N, K, &alpha, (float*)B.get_data_ptr(), lda, stride_a, (float*)A.get_data_ptr(), ldb, stride_b, &beta, (float*)scratch_buffer_, ldc, stride_c, B_sizes[0]);
+		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, 7, 896, 96, &alpha, (float*)B.get_data_ptr(), 96, 672, (float*)A.get_data_ptr(), 5376, 96, &beta, (float*)scratch_buffer_, 7, 6272, 56);
 
 		for (i = 0; i < ndims; i++)
 		{

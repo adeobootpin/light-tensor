@@ -22,7 +22,7 @@ namespace lten {
 		virtual void clear_gradients() = 0;
 		virtual void to(device target_device, int target_device_index = 0) = 0;
 		void train(bool is_training) { is_training_ = is_training; }
-		
+
 		virtual void set_qparams_in(QuantizationParams qparams_in) {}
 		virtual void set_qparams_out(QuantizationParams qparams_out) {}
 		virtual void set_qparams_params(QuantizationParams* qparams, int count) {}
@@ -360,7 +360,7 @@ namespace lten {
 	class softmax_CUDNN : public Module
 	{
 	public:
-		softmax_CUDNN(bool log_mode = false) 
+		softmax_CUDNN(bool log_mode = false)
 		{
 			if (log_mode)
 			{
@@ -377,7 +377,7 @@ namespace lten {
 		void clear_gradients() {}
 		std::vector<Tensor*> get_all_weights() { std::vector<Tensor*> dud; return dud; }
 		void to(device target_device, int target_device_index) {}
-		
+
 		cudnnSoftmaxAlgorithm_t get_algo() { return algo_; }
 		cudnnTensorDescriptor_t* get_inputDesc() { return &inputDesc_; }
 		cudnnTensorDescriptor_t* get_outputDesc() { return &outputDesc_; }
@@ -527,7 +527,7 @@ namespace lten {
 	class conv_CUDNN : public Module
 	{
 	public:
-		conv_CUDNN(const int expected_batch_size, const int channels_in, const int channels_out, const int ndims, const int* dims, const int* kernel, const int* padding, const int* stride, bool use_bias )
+		conv_CUDNN(const int expected_batch_size, const int channels_in, const int channels_out, const int ndims, const int* dims, const int* kernel, const int* padding, const int* stride, bool use_bias)
 		{
 			dims_ = new int[ndims];
 			kernel_ = new int[ndims];
@@ -546,6 +546,7 @@ namespace lten {
 			use_bias_ = use_bias;
 			batch_size_ = expected_batch_size;
 			ndims_ = ndims;
+			groupCount_ = 1;
 		}
 
 		~conv_CUDNN();
@@ -558,7 +559,7 @@ namespace lten {
 		std::vector<Tensor*> get_all_weights();
 		void to(device target_device, int target_device_index) {}
 		bool is_using_bias() { return use_bias_; }
-
+		void set_groupCount(uint32_t groupCount) { groupCount_ = groupCount; }
 		cudnnTensorDescriptor_t get_inputDesc() { return inputDesc_; }
 		cudnnTensorDescriptor_t get_outputDesc() { return outputDesc_; }
 		cudnnConvolutionDescriptor_t get_convDesc() { return convDesc_; }
@@ -576,7 +577,7 @@ namespace lten {
 		size_t get_bwd_workspace_size() { return bwd_workspace_size_; }
 
 	private:
-		uint32_t batch_size_;		
+		uint32_t batch_size_;
 		uint32_t channels_in_;
 		uint32_t channels_out_;
 		int* dims_;
@@ -588,6 +589,7 @@ namespace lten {
 		bool use_bias_;
 		uint32_t ndims_;
 		uint64_t* output_dims_;
+		uint32_t groupCount_;
 
 		cudnnTensorDescriptor_t inputDesc_;
 		cudnnTensorDescriptor_t outputDesc_;
@@ -636,7 +638,7 @@ namespace lten {
 		Tensor* get_weights() { return weight_ptr_; }
 		Tensor* get_bias() { return bias_ptr_; }
 		std::vector<Tensor*> get_all_weights();
-		void to(device target_device, int target_device_index) {} 
+		void to(device target_device, int target_device_index) {}
 		bool is_using_bias() { return use_bias_; }
 
 		cudnnTensorDescriptor_t get_inputDesc() { return inputDesc_; }
@@ -697,7 +699,7 @@ namespace lten {
 
 	class conv3d_CUDNN : public Module
 	{
-		enum { conv_dims = 3};
+		enum { conv_dims = 3 };
 	public:
 		conv3d_CUDNN(const int expected_batch_size, const int channels_in, const int depth_in, const int height_in, const int width_in, const int channels_out, bool use_bias, const int kernel_h, const int kernel_w, const int kernel_c, const int pad_h = 0, const int pad_w = 0, const int pad_c = 0, const int stride_h = 1, const int stride_w = 1, const int stride_c = 1)
 		{
@@ -861,7 +863,7 @@ namespace lten {
 	{
 	public:
 		BatchNorm_CUDNN(uint64_t num_features) : num_features_(num_features), weight_ptr_(nullptr), bias_ptr_(nullptr), mu_(nullptr), sigma_(nullptr) {}
-		~BatchNorm_CUDNN() 
+		~BatchNorm_CUDNN()
 		{
 			delete weight_ptr_;
 			delete bias_ptr_;
@@ -912,7 +914,7 @@ namespace lten {
 			stride_w_ = stride_w;
 		}
 
-		~pooling_CUDNN() 
+		~pooling_CUDNN()
 		{
 			cudnnErrCheck(cudnnDestroyPoolingDescriptor(poolingDesc_));
 			cudnnErrCheck(cudnnDestroyTensorDescriptor(inputDesc_));

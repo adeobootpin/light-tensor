@@ -3,12 +3,50 @@
 #include "lten.h"
 
 
-int conv3d_perf_test();
+void mul_test()
+{
+	int i;
+
+	std::chrono::steady_clock::time_point clock_begin;
+	std::chrono::steady_clock::time_point clock_end;
+	std::chrono::steady_clock::duration time_span;
+	double nseconds;
+
+
+	lten::Tensor a;
+	lten::Tensor b;
+	lten::Tensor c;
+
+
+	a = lten::RandomTensor({ 56, 56, 96 });
+	b = lten::RandomTensor({ 56, 56, 96 });
+
+	a = a.to(lten::GPU);
+	b = b.to(lten::GPU);
+
+	//for (i = 0; i < 100000; i++)
+	for (i = 0; i < 1; i++)
+	{
+		if (i == 10)
+		{
+			clock_begin = std::chrono::steady_clock::now();
+		}
+
+		c = a * b;
+	}
+
+	cudaDeviceSynchronize();
+
+	clock_end = std::chrono::steady_clock::now();
+	time_span = clock_end - clock_begin;
+	nseconds = double(time_span.count()) * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+	printf("lten mul_test [duration: %f sec]\n", nseconds);
+
+}
+
+
 void mean_test()
 {
-	conv3d_perf_test();
-
-
 	int i;
 	std::chrono::steady_clock::time_point clock_begin;
 	std::chrono::steady_clock::time_point clock_end;

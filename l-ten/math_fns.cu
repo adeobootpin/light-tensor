@@ -168,6 +168,7 @@ void gpu_mul(Dtype* A, Dtype* B, Dtype* C, uint64_t height_A, uint64_t width_A, 
 	gpu_mul_kernel<Dtype> << <dimGrid, dimBlock >> > (A, B, C, (int)height_A, (int)width_A, (int)height_B, (int)width_B, height, width, beta);
 }
 
+/*
 
 template<typename Dtype>
 __global__ void gpu_mul_kernel(uint64_t N, Dtype* A, Dtype* B, Dtype* C)
@@ -193,7 +194,7 @@ void gpu_mul(uint64_t N, Dtype* A, Dtype* B, Dtype* C)
 	gpu_mul_kernel<Dtype> << <num_blocks, DEFA_THREADS >> > (N, A, B, C);
 
 }
-
+*/
 
 __global__ void gpu_mul_kernel(float* A, float* B, float* C, int height_A, int width_A, int height_B, int width_B, int height_C, int width_C, int max_height, int max_width)
 {
@@ -2030,7 +2031,6 @@ template void gpu_sum<float>(const float* src, float* dst, const uint64_t numels
 template void gpu_sum_backward<float>(float* dst, const float* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 template void gpu_div<float>(uint64_t N, float* A, float* B, float* C);
 template void gpu_add<float>(uint64_t N, float alpha, float* A_ptr, float* B_ptr);
-template void gpu_mul<float>(uint64_t N, float* A, float* B, float* C);
 template void gpu_axpy<float>(uint64_t N, float alpha, float* X, float* Y, float* C);
 template void gpu_axpby<float>(uint64_t N, float alpha, float* X, float beta, float* Y, float* C);
 template void gpu_relu<float>(float* dst, float* src, uint64_t len);
@@ -2075,7 +2075,6 @@ template void gpu_sum<int>(const int* src, int* dst, const uint64_t numels, cons
 template void gpu_sum_backward<int>(int* dst, const int* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 template void gpu_div<int>(uint64_t N, int* A, int* B, int* C);
 template void gpu_add<int>(uint64_t N, int alpha, int* A_ptr, int* B_ptr);
-template void gpu_mul<int>(uint64_t N, int* A, int* B, int* C);
 template void gpu_axpy<int>(uint64_t N, int alpha, int* X, int* Y, int* C);
 template void gpu_axpby<int>(uint64_t N, int alpha, int* X, int beta, int* Y, int* C);
 template void gpu_relu<int>(int* dst, int* src, uint64_t len);
@@ -2120,7 +2119,6 @@ template void gpu_sum<uint8_t>(const uint8_t* src, uint8_t* dst, const uint64_t 
 template void gpu_sum_backward<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 template void gpu_div<uint8_t>(uint64_t N, uint8_t* A, uint8_t* B, uint8_t* C);
 template void gpu_add<uint8_t>(uint64_t N, uint8_t alpha, uint8_t* A_ptr, uint8_t* B_ptr);
-template void gpu_mul<uint8_t>(uint64_t N, uint8_t* A, uint8_t* B, uint8_t* C);
 template void gpu_axpy<uint8_t>(uint64_t N, uint8_t alpha, uint8_t* X, uint8_t* Y, uint8_t* C);
 template void gpu_axpby<uint8_t>(uint64_t N, uint8_t alpha, uint8_t* X, uint8_t beta, uint8_t* Y, uint8_t* C);
 template void gpu_relu<uint8_t>(uint8_t* dst, uint8_t* src, uint64_t len);

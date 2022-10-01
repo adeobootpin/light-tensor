@@ -14,6 +14,15 @@ extern "C"
 #endif
 
 template<typename Dtype>
+void gpu_mul(uint64_t N, Dtype* A, Dtype* B, Dtype* C);
+
+template<typename Dtype>
+void gpu_mul_backward(uint64_t N, Dtype* operand, Dtype* top_gradient, Dtype* bottom_gradient);
+
+template<typename Dtype>
+void gpu_mul(Dtype* A, Dtype* B, Dtype* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
+
+template<typename Dtype>
 void gpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels);
 
 template<typename Dtype>

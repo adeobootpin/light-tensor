@@ -1,8 +1,77 @@
 #include "tensor.h"
 #include "tests.h"
 
+#include "layers.h"
+
+
+void PoorMansArange(lten::Tensor* x)
+{
+	uint64_t numels;
+	uint64_t i;
+	int* data;
+
+	numels = x->get_numels();
+	data = (int*)x->get_data_ptr();
+
+	for (i = 0; i < numels; i++)
+	{
+		data[i] = (int)i;
+	}
+}
+
 int main(int argc, char* argv[])
 {
+	lten::Tensor A;
+	lten::Tensor B;
+	lten::Tensor C;
+
+	lten::Pseudo_Einsum_1 pe;
+	A = lten::RandomTensor({ 2, 1, 8, 56, 56, 96 });
+	B = lten::RandomTensor({ 56, 7, 96 });
+	A = A.to(lten::GPU);
+	B = B.to(lten::GPU);
+	C = pe.forward(A, B);
+
+
+
+
+	//mul_test();
+
+	lten::Tensor temp_l;
+	lten::Tensor temp_r;
+	lten::TensorOps ops;
+	ops.data_type = lten::INT32;
+	lten::Tensor dist_h;
+	uint64_t q_h = 56;
+	uint64_t k_h = 7;
+
+	float q_h_ratio = 1.0f;
+	float k_h_ratio = 8.0f;
+
+
+
+	temp_l = lten::AllocateTensor({ q_h, 1 }, &ops);
+	temp_r = lten::AllocateTensor({ 1, k_h }, &ops);
+	PoorMansArange(&temp_l);
+	PoorMansArange(&temp_r);
+
+	temp_l = temp_l.to(lten::GPU);
+	temp_r = temp_r.to(lten::GPU);
+
+
+	dist_h = temp_l - temp_r;
+
+
+	//dist_h = temp_l * q_h_ratio - temp_r * k_h_ratio;
+
+
+	dist_h = dist_h.to(lten::CPU);
+
+	std::cout << dist_h << "\n";
+
+	return 0;
+	
+
 	int ret;
 	int total_tests;
 	int total_tests_passed;
@@ -65,7 +134,7 @@ int main(int argc, char* argv[])
 	total_tests++;
 	if (ret)
 	{
-		printf("tensor ddition test 2 failed\n");
+		printf("tensor addition test 2 failed\n");
 	}
 	else
 	{

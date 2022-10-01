@@ -34,8 +34,8 @@ int add_test_1(bool run_on_gpu)
 	w = lten::TensorFromBuffer({ 2, 2, 2, 3 }, w_vals, false);
 
 
-	x.set_autograd(true);
-	w.set_autograd(true);
+	x.set_accumulate_gradients(true);
+	w.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -102,8 +102,8 @@ int add_test_2(bool run_on_gpu)
 	x = lten::TensorFromBuffer({ 2, 2, 2, 3 }, x_vals, false);
 	w = lten::TensorFromBuffer({ 2, 1, 2, 1 }, w_vals, false);
 
-	x.set_autograd(true);
-	w.set_autograd(true);
+	x.set_accumulate_gradients(true);
+	w.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -171,8 +171,8 @@ int sub_test_1(bool run_on_gpu)
 	x = lten::TensorFromBuffer({ 2, 2, 2, 3 }, x_vals, false);
 	w = lten::TensorFromBuffer({ 2, 2, 2, 3 }, w_vals, false);
 
-	x.set_autograd(true);
-	w.set_autograd(true);
+	x.set_accumulate_gradients(true);
+	w.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -239,8 +239,8 @@ int sub_test_2(bool run_on_gpu)
 	x = lten::TensorFromBuffer({ 2, 2, 2, 3 }, x_vals, false);
 	w = lten::TensorFromBuffer({ 2, 1, 2, 1 }, w_vals, false);
 
-	x.set_autograd(true);
-	w.set_autograd(true);
+	x.set_accumulate_gradients(true);
+	w.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -391,8 +391,8 @@ int mul_test_1(bool run_on_gpu)
 	x = lten::TensorFromBuffer({ 2, 2, 2, 3 }, x_vals, false);
 	w = lten::TensorFromBuffer({ 2, 2, 2, 3 }, w_vals, false);
 
-	x.set_autograd(true);
-	w.set_autograd(true);
+	x.set_accumulate_gradients(true);
+	w.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -460,8 +460,8 @@ int mul_test_2(bool run_on_gpu)
 	x = lten::TensorFromBuffer({ 2, 2, 2, 3 }, x_vals, false);
 	w = lten::TensorFromBuffer({ 2, 1, 2, 1 }, w_vals, false);
 
-	x.set_autograd(true);
-	w.set_autograd(true);
+	x.set_accumulate_gradients(true);
+	w.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -573,8 +573,8 @@ int div_test_1(bool run_on_gpu)
 	x = lten::TensorFromBuffer({ 2, 1, 4, 3 }, x_vals, false);
 	w = lten::TensorFromBuffer({ 2, 1, 4, 3 }, w_vals, false);
 
-	x.set_autograd(true);
-	w.set_autograd(true);
+	x.set_accumulate_gradients(true);
+	w.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -642,8 +642,8 @@ int div_test_2(bool run_on_gpu)
 	x = lten::TensorFromBuffer({ 2, 2, 2, 3 }, x_vals, false);
 	w = lten::TensorFromBuffer({ 2, 1, 2, 1 }, w_vals, false);
 
-	x.set_autograd(true);
-	w.set_autograd(true);
+	x.set_accumulate_gradients(true);
+	w.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -710,8 +710,8 @@ int matmul_test(bool run_on_gpu)
 	x = lten::TensorFromBuffer({ 2, 1, 4, 3 }, x_vals, false);
 	w = lten::TensorFromBuffer({ 1, 1, 3, 4 }, w_vals, false);
 
-	x.set_autograd(true);
-	w.set_autograd(true);
+	x.set_accumulate_gradients(true);
+	w.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -782,8 +782,8 @@ int matmul_test_uint8()
 	x = lten::TensorFromBuffer({ 2, 1, 4, 3 }, x_vals, false, &options);
 	w = lten::TensorFromBuffer({ 1, 1, 3, 4 }, w_vals, false, &options);
 
-	x.set_autograd(true);
-	w.set_autograd(true);
+	x.set_accumulate_gradients(true);
+	w.set_accumulate_gradients(true);
 
 	z = x.matmul(w);
 
@@ -825,7 +825,7 @@ int exp_test(bool run_on_gpu)
 
 	x = lten::TensorFromBuffer({ 2, 1, 4, 3 }, x_vals, false);
 
-	x.set_autograd(true);
+	x.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -885,7 +885,7 @@ int log_test(bool run_on_gpu)
 
 	x = lten::TensorFromBuffer({ 2, 1, 4, 3 }, x_vals, false);
 
-	x.set_autograd(true);
+	x.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -944,7 +944,7 @@ int sig_test(bool run_on_gpu)
 
 	x = lten::TensorFromBuffer({ 2, 1, 4, 3 }, x_vals, false);
 
-	x.set_autograd(true);
+	x.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -1003,7 +1003,7 @@ int tanh_test(bool run_on_gpu)
 
 	x = lten::TensorFromBuffer({ 2, 1, 4, 3 }, x_vals, false);
 
-	x.set_autograd(true);
+	x.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -1065,7 +1065,7 @@ int scalar_mul(bool run_on_gpu)
 
 	x = lten::TensorFromBuffer({ 2, 1, 4, 3 }, x_vals, false);
 
-	x.set_autograd(true);
+	x.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -1122,7 +1122,7 @@ int max_test(bool run_on_gpu)
 
 	x = lten::TensorFromBuffer({ 2, 2, 2, 3 }, x_vals, false);
 
-	x.set_autograd(true);
+	x.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -1168,7 +1168,7 @@ int sum_test(bool run_on_gpu)
 
 	x = lten::TensorFromBuffer({ 2, 2, 2, 3 }, x_vals, false);
 
-	x.set_autograd(true);
+	x.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -1205,7 +1205,7 @@ int sum_test(bool run_on_gpu)
 	float x_grad_vals_2[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0 };
 
 	x = lten::TensorFromBuffer({ 2, 1, 4, 3 }, x_vals, false);
-	x.set_autograd(true);
+	x.set_accumulate_gradients(true);
 	z = x.sum(2);
 
 	a = z[0][1][0][1];
@@ -1244,7 +1244,7 @@ int fc_test(bool run_on_gpu)
 	float x_vals[] = { 2, 3, 4, 2, 6, 8, 5, 7, 5, 2, 1, 9, 0, 3, 6, 4, 8, 2, 3, 2, 2, 4, 5, 6 };
 
 	x = lten::TensorFromBuffer({ 2, 1, 4, 3 }, x_vals);
-	x.set_autograd(true);
+	x.set_accumulate_gradients(true);
 
 	if (run_on_gpu)
 	{
@@ -1349,7 +1349,7 @@ int indexing_test(bool run_on_gpu)
 
 
 	a = lten::TensorFromBuffer({ 6, 4 }, a_vals, false);
-	a.set_autograd(true);
+	a.set_accumulate_gradients(true);
 	a.clear_gradients();
 
 	op.data_type = lten::INT32;

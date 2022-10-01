@@ -329,6 +329,7 @@ namespace lten {
 		options.device_type = target_device;
 		options.device_index = target_device_index;
 		set_autograd(operand1.autograd_on());
+		set_accumulate_gradients(operand1.accumulates_gradients());
 
 		LTEN_ERR_CHECK(allocate(operand1.get_sizes(), operand1.get_ndims(), &options));
 

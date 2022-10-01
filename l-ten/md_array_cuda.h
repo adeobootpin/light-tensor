@@ -319,6 +319,7 @@ public:
 	}
 
 
+	/*
 	CUDA_MultiDimArray operator*(const CUDA_MultiDimArray& other)
 	{
 		const uint64_t* other_dims_array;
@@ -380,6 +381,39 @@ public:
 			Reshape(original_ndims);
 			other.Reshape(original_ndims);
 			result.Reshape(original_ndims);
+		}
+
+		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
+	}
+	*/
+
+	CUDA_MultiDimArray operator*(const CUDA_MultiDimArray& other)
+	{
+		const uint64_t* other_dims_array;
+		uint64_t dims_result[MAX_DIMS];
+		CUDA_MultiDimArray result;
+		bool broadcast_required;
+
+		if (ndims_ != other.GetNDims())
+		{
+			LTEN_ERR("MultiDimArrays must have the same number of dimensions");
+		}
+
+
+		other_dims_array = other.GetSizes();
+
+		broadcast_required = check_broadcast_required(other_dims_array, dims_result);
+
+		result.Allocate(dims_result, ndims_, nullptr, false);
+
+
+		if (broadcast_required)
+		{
+			gpu_mul(GetDataPtr(), other.GetDataPtr(), result.GetDataPtr(), result.GetNumels(), this->GetStrides(), other.GetStrides(), result.GetStrides(), this->GetSizes(), other.GetSizes(), result.GetSizes(), ndims_);
+		}
+		else
+		{
+			gpu_mul(result.GetNumels(), GetDataPtr(), other.GetDataPtr(), result.GetDataPtr());
 		}
 
 		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);

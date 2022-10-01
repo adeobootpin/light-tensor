@@ -66,7 +66,8 @@ namespace lten {
 		uint64_t get_numels() { return smart_ptr_->get_numels(); }
 		void set_autograd(bool setting) { smart_ptr_->set_autograd(setting); }
 		bool autograd_on() { return smart_ptr_->autograd_on(); }
-		void set_parameter(bool setting) { smart_ptr_->set_parameter(setting); }
+		void set_accumulate_gradients(bool setting) { smart_ptr_->set_accumulate_gradients(setting); }
+		bool accumulates_gradients() { return smart_ptr_->accumulates_gradients(); }
 		const uint64_t* get_sizes() { return smart_ptr_->get_sizes(); }
 		const uint64_t* get_strides() { return smart_ptr_->get_strides(); }
 		void backward(MultiDimArray<float>* top_gradient = nullptr) { smart_ptr_->backward(top_gradient); }
@@ -264,6 +265,62 @@ namespace lten {
 			return Tensor();
 		}
 
+		friend Tensor operator+(float scalar, Tensor& rhs)
+		{
+			return rhs + scalar;
+		}
+
+		Tensor operator+(float scalar)
+		{
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				//resultImpl->scalar_mul(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), scalar);
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					//resultImpl->scalar_mul(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), scalar);
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						//resultImpl->scalar_mul(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), scalar);
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
+
 		Tensor operator+(const Tensor& other)
 		{
 			dtype data_type = smart_ptr_->get_data_type();
@@ -310,6 +367,62 @@ namespace lten {
 						intrusive_ptr<TensorImplBase> result(resultImpl);
 
 						resultImpl->add(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<uint8_t>*>(other.smart_ptr_.get_real_object()));
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
+
+		friend Tensor operator-(float scalar, Tensor& rhs)
+		{
+			return rhs - scalar;
+		}
+
+		Tensor operator-(float scalar)
+		{
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				//resultImpl->scalar_mul(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), scalar);
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					//resultImpl->scalar_mul(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), scalar);
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						//resultImpl->scalar_mul(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), scalar);
 
 						return Tensor(result);
 					}
@@ -1110,6 +1223,10 @@ namespace lten {
 			return Tensor();
 		}
 
+		friend Tensor operator*(float scalar, Tensor& rhs)
+		{
+			return rhs * scalar;
+		}
 
 		Tensor operator*(float scalar)
 		{
@@ -1217,12 +1334,6 @@ namespace lten {
 
 			LTEN_ERR("Invalid tesor data type");
 			return Tensor();
-		}
-
-
-		friend Tensor operator*(float scalar, Tensor& rhs)
-		{
-			return rhs * scalar;
 		}
 
 		Tensor cat(const Tensor& other, int dim = 0)

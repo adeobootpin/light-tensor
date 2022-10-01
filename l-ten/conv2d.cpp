@@ -535,7 +535,7 @@ namespace lten {
 		float beta;
 		cudnnStatus_t status;
 		cudnnHandle_t cudnnHandle;
-		
+
 
 		dims = input.get_sizes();
 
@@ -634,7 +634,7 @@ namespace lten {
 		return weights;
 	}
 
-	
+
 	void conv2d_CUDNN::clear_gradients()
 	{
 		if (weight_ptr_)
@@ -666,8 +666,8 @@ namespace lten {
 		int filterDimsA[conv_dims + 2];
 		int biasDimsA[conv_dims + 2];
 		int biasStrideA[conv_dims + 2];
-		
-		
+
+
 		cudnnHandle = CUDA_globlas::singleton()->get_cudnn_handle(0);
 
 		cudnnErrCheck(cudnnCreateTensorDescriptor(&inputDesc_));
@@ -741,7 +741,7 @@ namespace lten {
 		{
 			output_dims_[i] = ouputDimsA[i];
 		}
-		
+
 
 		options.data_type = FLOAT32;
 		options.alloc_gradient_buffer = true;
@@ -797,7 +797,7 @@ namespace lten {
 			*bias_ptr_ = bias_ptr_->to(GPU, 0);
 		}
 
-		
+
 		return true;
 	}
 
@@ -973,7 +973,7 @@ namespace lten {
 
 
 		filterDimsA[0] = channels_out_;
-		filterDimsA[1] = channels_in_;
+		filterDimsA[1] = channels_in_ / groupCount_;
 		for (i = 0; i < ndims_; i++)
 		{
 			filterDimsA[i + 2] = kernel_[i];
@@ -1007,16 +1007,16 @@ namespace lten {
 			bwd_algo_ = CUDNN_CONVOLUTION_BWD_DATA_ALGO_1;
 		}
 
-		
 		cudnnErrCheck(cudnnSetConvolutionNdDescriptor(convDesc_, ndims_, padding_, stride_, dilationA, CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT));
+		cudnnErrCheck(cudnnSetConvolutionGroupCount(convDesc_, groupCount_));
 		cudnnErrCheck(cudnnSetFilterNdDescriptor(wtDesc_, CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW, ndims_ + 2, filterDimsA));
 		cudnnErrCheck(cudnnSetTensorNdDescriptor(biasDesc_, CUDNN_DATA_FLOAT, ndims_ + 2, biasDimsA, biasStrideA));
-		
+
 		cudnnErrCheck(cudnnSetTensorNdDescriptor(inputDesc_, CUDNN_DATA_FLOAT, ndims_ + 2, dimsA, strideA));
 		cudnnErrCheck(cudnnGetConvolutionNdForwardOutputDim(convDesc_, inputDesc_, wtDesc_, ndims_ + 2, ouputDimsA));
 		GetStrides(ouputDimsA, outputStrideA, ndims_ + 2);
 		cudnnErrCheck(cudnnSetTensorNdDescriptor(outputDesc_, CUDNN_DATA_FLOAT, ndims_ + 2, ouputDimsA, outputStrideA));
-		
+
 		cudnnErrCheck(cudnnGetConvolutionForwardAlgorithm(cudnnHandle, inputDesc_, wtDesc_, convDesc_, outputDesc_, CUDNN_CONVOLUTION_FWD_PREFER_FASTEST, 0, &algo_));
 		cudnnErrCheck(cudnnGetConvolutionForwardWorkspaceSize(cudnnHandle, inputDesc_, wtDesc_, convDesc_, outputDesc_, algo_, &workspace_size_));
 		AllocateMemoryOnGPU(&workspace_, workspace_size_, false);
@@ -1033,12 +1033,12 @@ namespace lten {
 		{
 			output_dims_[i] = ouputDimsA[i];
 		}
-		
+
 
 		options.data_type = FLOAT32;
 		options.alloc_gradient_buffer = true;
 
-		
+
 		uint64_t filterDims[MAX_DIMS];
 		for (i = 0; i < ndims_ + 2; i++)
 		{
@@ -1066,7 +1066,7 @@ namespace lten {
 			bias_ptr_ = nullptr;
 		}
 
-		
+
 		std::random_device generator;
 		//std::default_random_engine generator;
 		float k = 1.0f / (channels_in_ * (weight_ptr_->get_numels() / channels_out_));
@@ -1104,12 +1104,12 @@ namespace lten {
 		{
 			*bias_ptr_ = bias_ptr_->to(GPU, 0);
 		}
-		
+
 
 		return true;
 	}
 
-	conv_CUDNN::~conv_CUDNN() 
+	conv_CUDNN::~conv_CUDNN()
 	{
 		cudnnErrCheck(cudnnDestroyTensorDescriptor(inputDesc_));
 		cudnnErrCheck(cudnnDestroyTensorDescriptor(outputDesc_));
@@ -1164,38 +1164,55 @@ namespace lten {
 			LTEN_ERR("Dimension 1 must be equal to the number of input channels");
 		}
 
-		/*
-		if (batch_size_ != dims[0] || height_in_ != dims[2] || width_in_ != dims[3])
+		if (batch_size_ != dims[0] || dims_[0] != dims[2] || dims_[1] != dims[3] || dims_[2] != dims[4]) // TODO: BUGBUG: this check will only work for 3d (i.e. ndims==5), fix for other dims
 		{
-			LTEN_CUDNN_CHECK_2(cudnnSetTensor4dDescriptor(inputDesc_, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, static_cast<int>(dims[0]), static_cast<int>(dims[1]), static_cast<int>(dims[2]), static_cast<int>(dims[3])));
-			LTEN_CUDNN_CHECK_2(cudnnGetConvolution2dForwardOutputDim(convDesc_, inputDesc_, wtDesc_, &n, &c, &h, &w));
-			LTEN_CUDNN_CHECK_2(cudnnSetTensor4dDescriptor(outputDesc_, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, n, c, h, w));
-			LTEN_CUDNN_CHECK_2(cudnnGetConvolutionForwardAlgorithm(cudnnHandle, inputDesc_, wtDesc_, convDesc_, outputDesc_, CUDNN_CONVOLUTION_FWD_PREFER_FASTEST, 0, &algo_));
-			LTEN_CUDNN_CHECK_2(cudnnGetConvolutionForwardWorkspaceSize(cudnnHandle, inputDesc_, wtDesc_, convDesc_, outputDesc_, algo_, &workspace_size_));
+			int dimsA[MAX_DIMS + 2];
+			int strideA[MAX_DIMS + 2];
+			int ouputDimsA[MAX_DIMS + 2];
+			int outputStrideA[MAX_DIMS + 2];
+			int i;
+
+			for (i = 2; i < ndims; i++)
+			{
+				dims_[i - 2] = static_cast<int>(dims[i]);
+			}
+			batch_size_ = static_cast<uint32_t>(dims[0]);
+
+			dimsA[0] = batch_size_;
+			dimsA[1] = channels_in_;
+			for (i = 0; i < (int)ndims_; i++)
+			{
+				dimsA[i + 2] = dims_[i];
+			}
+			GetStrides(dimsA, strideA, ndims_ + 2);
+
+			cudnnErrCheck(cudnnSetTensorNdDescriptor(inputDesc_, CUDNN_DATA_FLOAT, ndims_ + 2, dimsA, strideA));
+			cudnnErrCheck(cudnnGetConvolutionNdForwardOutputDim(convDesc_, inputDesc_, wtDesc_, ndims_ + 2, ouputDimsA));
+			GetStrides(ouputDimsA, outputStrideA, ndims_ + 2);
+			cudnnErrCheck(cudnnSetTensorNdDescriptor(outputDesc_, CUDNN_DATA_FLOAT, ndims_ + 2, ouputDimsA, outputStrideA));
+
+
+			cudnnErrCheck(cudnnGetConvolutionForwardAlgorithm(cudnnHandle, inputDesc_, wtDesc_, convDesc_, outputDesc_, CUDNN_CONVOLUTION_FWD_PREFER_FASTEST, 0, &algo_));
+			cudnnErrCheck(cudnnGetConvolutionForwardWorkspaceSize(cudnnHandle, inputDesc_, wtDesc_, convDesc_, outputDesc_, algo_, &workspace_size_));
 			FreeMemoryOnGPU(workspace_);
 			AllocateMemoryOnGPU(&workspace_, workspace_size_, false);
 
 
-			LTEN_CUDNN_CHECK_2(cudnnGetConvolutionBackwardFilterWorkspaceSize(cudnnHandle, inputDesc_, outputDesc_, convDesc_, wtDesc_, bwf_algo_, &bwf_workspace_size_));
+			cudnnErrCheck(cudnnGetConvolutionBackwardFilterWorkspaceSize(cudnnHandle, inputDesc_, outputDesc_, convDesc_, wtDesc_, bwf_algo_, &bwf_workspace_size_));
 			FreeMemoryOnGPU(bwf_workspace_);
 			AllocateMemoryOnGPU(&bwf_workspace_, bwf_workspace_size_, false);
 
 
-			LTEN_CUDNN_CHECK_2(cudnnGetConvolutionBackwardDataWorkspaceSize(cudnnHandle, wtDesc_, outputDesc_, convDesc_, inputDesc_, bwd_algo_, &bwd_workspace_size_));
+			cudnnErrCheck(cudnnGetConvolutionBackwardDataWorkspaceSize(cudnnHandle, wtDesc_, outputDesc_, convDesc_, inputDesc_, bwd_algo_, &bwd_workspace_size_));
 			FreeMemoryOnGPU(bwd_workspace_);
 			AllocateMemoryOnGPU(&bwd_workspace_, bwd_workspace_size_, false);
 
-			batch_size_ = dims[0];
-			channels_in_ = dims[1];
-			height_in_ = dims[2];
-			width_in_ = dims[3];
+			for (i = 0; i < ndims; i++)
+			{
+				output_dims_[i] = ouputDimsA[i];
+			}
 
-			output_dims_[0] = n;
-			output_dims_[1] = c;
-			output_dims_[2] = h;
-			output_dims_[3] = w;
 		}
-		*/
 
 		TensorImpl<float>* resultImpl;
 		resultImpl = new TensorImpl<float>;

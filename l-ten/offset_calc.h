@@ -16,9 +16,216 @@ struct Divider
 	uint32_t divisor;
 };
 
-struct OffsetCalc
+struct OffsetCalc_broadcast
 {
-	OffsetCalc(const int num_dims, const uint64_t* strides_dst, const uint64_t* strides_src)
+	OffsetCalc_broadcast(const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* output_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* output_strides)
+	{
+		uint32_t divisor;
+		uint32_t shift;
+		int i;
+
+		ndims = num_dims;
+
+		for (i = 0; i < ndims; i++)
+		{
+			divisor = (uint32_t)output_strides[i];
+
+			for (shift = 0; shift < 32; shift++)
+			{
+				if ((1U << shift) >= divisor)
+				{
+					break;
+				}
+			}
+
+			uint64_t one = 1;
+			uint64_t magic = ((one << 32) * ((one << shift) - divisor)) / divisor + 1;
+
+			div[i].magic = (uint32_t)magic;
+			div[i].shift = shift;
+			div[i].divisor = divisor;
+
+			if (op1_dims[i] == output_dims[i])
+			{
+				operand_strides[i][0] = (uint32_t)op1_strides[i];
+			}
+			else
+			{
+				operand_strides[i][0] = 0;
+			}
+
+			if (op2_dims[i] == output_dims[i])
+			{
+				operand_strides[i][1] = (uint32_t)op2_strides[i];
+			}
+			else
+			{
+				operand_strides[i][1] = 0;
+			}
+		}
+	}
+	/*
+	OffsetCalc_broadcast(const int num_dims, const uint64_t* op_strides, const uint64_t* output_strides)
+	{
+		uint32_t divisor;
+		uint32_t shift;
+		int i;
+
+		ndims = num_dims;
+
+		for (i = 0; i < ndims; i++)
+		{
+			divisor = (uint32_t)output_strides[i];
+
+			for (shift = 0; shift < 32; shift++)
+			{
+				if ((1U << shift) >= divisor)
+				{
+					break;
+				}
+			}
+
+			uint64_t one = 1;
+			uint64_t magic = ((one << 32) * ((one << shift) - divisor)) / divisor + 1;
+
+			div[i].magic = (uint32_t)magic;
+			div[i].shift = shift;
+			div[i].divisor = divisor;
+
+			operand_strides[i][0] = (uint32_t)op_strides[i];
+		}
+	}
+	*/
+	LTEN_HOST_DEVICE void GetOffsets(uint32_t index, uint32_t* op1_offset, uint32_t* op2_offset)
+	{
+		uint32_t op1_offs;
+		uint32_t op2_offs;
+
+		int i;
+		uint32_t coordinate;
+
+		op1_offs = 0;
+		op2_offs = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; ++i)
+		{
+			if (i == ndims)
+			{
+				break;
+			}
+
+			coordinate = ((((uint64_t)index * div[i].magic) >> 32) + index) >> div[i].shift;
+			index = index - coordinate * div[i].divisor;
+
+			op1_offs += coordinate * operand_strides[i][0];
+			op2_offs += coordinate * operand_strides[i][1];
+		}
+
+		*op1_offset = op1_offs;
+		*op2_offset = op2_offs;
+	}
+
+	LTEN_HOST_DEVICE void GetOffsets(uint32_t index, uint32_t* op_offsets)
+	{
+		uint32_t op1_offs;
+		uint32_t op2_offs;
+
+		int i;
+		uint32_t coordinate;
+
+		op1_offs = 0;
+		op2_offs = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; ++i)
+		{
+			if (i == ndims)
+			{
+				break;
+			}
+
+			coordinate = ((((uint64_t)index * div[i].magic) >> 32) + index) >> div[i].shift;
+			index = index - coordinate * div[i].divisor;
+
+			op1_offs += coordinate * operand_strides[i][0];
+			op2_offs += coordinate * operand_strides[i][1];
+		}
+
+		op_offsets[0] = op1_offs;
+		op_offsets[1] = op2_offs;
+	}
+
+	LTEN_HOST_DEVICE uint32_t GetOffset(uint32_t index)
+	{
+		uint32_t offs;
+
+		int i;
+		uint32_t coordinate;
+
+		offs = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; ++i)
+		{
+			if (i == ndims)
+			{
+				break;
+			}
+
+			coordinate = ((((uint64_t)index * div[i].magic) >> 32) + index) >> div[i].shift;
+			index = index - coordinate * div[i].divisor;
+
+			offs += coordinate * operand_strides[i][0];
+		}
+
+		return offs;
+
+	}
+
+	LTEN_HOST_DEVICE void GetOffset(uint32_t index, uint32_t* offset)
+	{
+		uint32_t offs;
+
+		int i;
+		uint32_t coordinate;
+
+		offs = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; ++i)
+		{
+			if (i == ndims)
+			{
+				break;
+			}
+
+			coordinate = ((((uint64_t)index * div[i].magic) >> 32) + index) >> div[i].shift;
+			index = index - coordinate * div[i].divisor;
+
+			offs += coordinate * operand_strides[i][0];
+		}
+
+		*offset = offs;
+	}
+
+	uint32_t operand_strides[MAX_DIMS][2];
+	Divider div[MAX_DIMS];
+	int ndims;
+};
+
+
+struct OffsetCalc_transpose
+{
+	OffsetCalc_transpose(const int num_dims, const uint64_t* strides_dst, const uint64_t* strides_src)
 	{
 		uint32_t divisor;
 		uint32_t shift;

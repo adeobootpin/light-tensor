@@ -65,7 +65,7 @@ public:
 			}
 
 			network_param_array_[num_params_].param_data_ = nullptr;
-			param->set_parameter(true);
+			param->set_accumulate_gradients(true);
 			network_param_array_[num_params_++].param_ = param;		
 		}
 

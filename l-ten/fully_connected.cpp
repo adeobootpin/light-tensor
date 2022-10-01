@@ -15,6 +15,7 @@ namespace lten {
 		weight_ptr_ = new Tensor;
 		*weight_ptr_ = AllocateTensor({ 1, 1, output_features_, input_features_ }, &options);
 		weight_ptr_->set_autograd(true);
+		weight_ptr_->set_accumulate_gradients(true);
 
 		if (use_bias_)
 		{
@@ -22,6 +23,7 @@ namespace lten {
 			bias_ptr_ = new Tensor;
 			*bias_ptr_ = AllocateTensor({ output_features_ }, &options);
 			bias_ptr_->set_autograd(true);
+			bias_ptr_->set_accumulate_gradients(true);
 
 			bias_multiplier_ = new Tensor;
 		}
@@ -47,7 +49,7 @@ namespace lten {
 			for (i = 0; i < numels; i++)
 			{
 				raw_data_ptr[i] = distribution(generator);
-			}
+			}			
 		}
 
 		return true;
