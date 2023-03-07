@@ -150,6 +150,35 @@ void ReshapeDims(const uint64_t* current_dims_ptr, int current_size, uint64_t* n
 }
 
 
+// reshape current_dims by inserting 1's into locations specified by unsqueeze_dims
+// e.g. [20, 24, 8] becomes [20, 1, 24, 1, 8]
+// if unsqueeze_dims is [1,3]
+void UnsqueezeDims(const uint64_t* current_dims, int current_ndims, uint32_t* unsqueeze_dims, int unsqueeze_ndims, uint64_t* new_dims)
+{
+	uint32_t ndims;
+	int i;
+	int index;
+
+	ndims = current_ndims + unsqueeze_ndims;
+	memset(new_dims, 0, sizeof(uint64_t) * ndims);
+
+	for (i = 0; i < unsqueeze_ndims; i++)
+	{
+		new_dims[unsqueeze_dims[i]] = 1;
+	}
+
+	index = 0;
+	for (i = 0; i < ndims; i++)
+	{
+		if (new_dims[i] == 0)
+		{
+			new_dims[i] = current_dims[index++];
+		}
+	}
+
+}
+
+
 void GetMaxDims(uint64_t* dims_1, uint64_t* dims_2, uint64_t* dims_max, int ndims)
 {
 	int i;
@@ -404,6 +433,89 @@ void ltenErrMsg(const char* msg, const char *file, const char *function, int lin
 {
 	fprintf(stderr, "[Error] File: %s Function: %s Line:%d Msg: %s\n", file, function, line, msg);
 }
+
+
+bool check_broadcast_required(const uint64_t* dims_a, const uint64_t* dims_b, uint32_t ndims, bool transpose_a, bool transpose_b, uint64_t* dims_result, bool mat_mul_check)
+{
+	bool broadcast_required;
+	uint32_t i;
+	uint64_t dims_A[MAX_DIMS];
+	uint64_t dims_B[MAX_DIMS];
+
+	const uint64_t* dims_a_ptr;
+	const uint64_t* dims_b_ptr;
+
+	uint64_t temp;
+
+	broadcast_required = false;
+
+	if (transpose_a)
+	{
+		memcpy(dims_A, dims_a, sizeof(uint64_t) * ndims);
+		temp = dims_A[ndims - 1];
+		dims_A[ndims - 1] = dims_A[ndims - 2];
+		dims_A[ndims - 2] = temp;
+
+		dims_a_ptr = dims_A;
+	}
+	else
+	{
+		dims_a_ptr = dims_a;
+	}
+
+
+	if (transpose_b)
+	{
+		memcpy(dims_B, dims_b, sizeof(uint64_t) * ndims);
+		temp = dims_B[ndims - 1];
+		dims_B[ndims - 1] = dims_B[ndims - 2];
+		dims_B[ndims - 2] = temp;
+
+		dims_b_ptr = dims_B;
+	}
+	else
+	{
+		dims_b_ptr = dims_b;
+	}
+
+
+	if (mat_mul_check)
+	{
+		if (dims_a_ptr[ndims - 1] != dims_b_ptr[ndims - 2]) // check matrix dimension compatibility
+		{
+			LTEN_ERR("Tensors must have compatiple dimensions");
+		}
+
+		if (dims_result)
+		{
+			dims_result[ndims - 1] = dims_b_ptr[ndims - 1];
+			dims_result[ndims - 2] = dims_a_ptr[ndims - 2];
+		}
+
+		ndims -= 2; // W & H may not match for matrix multiplication
+	}
+
+	for (i = 0; i < ndims; i++)
+	{
+		if (dims_a_ptr[i] != dims_b_ptr[i])
+		{
+			if (dims_a_ptr[i] != 1 && dims_b_ptr[i] != 1)
+			{
+				LTEN_ERR("MultiDimArrays must have compatiple dimensions");
+			}
+
+			broadcast_required = true;
+		}
+
+		if (dims_result)
+		{
+			dims_result[i] = std::max(dims_a_ptr[i], dims_b_ptr[i]);
+		}
+	}
+
+	return broadcast_required;
+}
+
 
 template void FillBuffer<float>(float* data_ptr, uint64_t len, float value);
 template void FillBuffer<int>(int* data_ptr, uint64_t len, int value);

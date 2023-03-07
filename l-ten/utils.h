@@ -9,7 +9,7 @@ void FillBuffer(Dtype* data_ptr, uint64_t len, Dtype value);
 
 
 void ReshapeDims(const uint64_t* current_dims_ptr, int current_size, uint64_t* new_dims_ptr, int new_size);
-
+void UnsqueezeDims(const uint64_t* current_dims, int current_ndims, uint32_t* unsqueeze_dims, int unsqueeze_ndims, uint64_t* new_dims);
 
 
 void GetMaxDims(uint64_t* dims_1, uint64_t* dims_2, uint64_t* dims_max, int ndims);
@@ -44,5 +44,6 @@ void GetStrides(const int* dims, int* strides, int ndims);
 void GetStrides(const uint32_t* dims, uint32_t* strides, int ndims);
 void GetStrides(const uint64_t* dims, uint64_t* strides, int ndims);
 uint32_t GetNextPowerOf2(int number);
+bool check_broadcast_required(const uint64_t* dims_a, const uint64_t* dims_b, uint32_t ndims, bool transpose_a, bool transpose_b, uint64_t* dims_result = nullptr, bool mat_mul_check = false);
 
 #endif // UTILS_H

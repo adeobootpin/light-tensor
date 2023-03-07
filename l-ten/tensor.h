@@ -320,8 +320,8 @@ namespace lten {
 			LTEN_ERR("Invalid tesor data type");
 			return Tensor();
 		}
-
-		Tensor operator+(const Tensor& other)
+		
+		Tensor operator+(const Tensor&& other)
 		{
 			dtype data_type = smart_ptr_->get_data_type();
 
@@ -376,6 +376,119 @@ namespace lten {
 			LTEN_ERR("Invalid tesor data type");
 			return Tensor();
 		}
+		
+		Tensor operator+(const Tensor& other) const &
+		{
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type != other.smart_ptr_->get_data_type())
+			{
+				LTEN_ERR("Tensor data types must match");
+			}
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				resultImpl->add(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<float>*>(other.smart_ptr_.get_real_object()));
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					resultImpl->add(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<int>*>(other.smart_ptr_.get_real_object()));
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						resultImpl->add(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<uint8_t>*>(other.smart_ptr_.get_real_object()));
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
+
+		Tensor operator+(const Tensor& other) &&
+		{
+			dtype data_type = smart_ptr_->get_data_type();
+
+			if (data_type != other.smart_ptr_->get_data_type())
+			{
+				LTEN_ERR("Tensor data types must match");
+			}
+
+			if (data_type == FLOAT32)
+			{
+				TensorImpl<float>* resultImpl;
+
+				resultImpl = new TensorImpl<float>;
+
+				intrusive_ptr<TensorImplBase> result(resultImpl);
+
+				resultImpl->add(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<float>*>(other.smart_ptr_.get_real_object()));
+
+				return Tensor(result);
+			}
+			else
+			{
+				if (data_type == INT32)
+				{
+					TensorImpl<int>* resultImpl;
+
+					resultImpl = new TensorImpl<int>;
+
+					intrusive_ptr<TensorImplBase> result(resultImpl);
+
+					resultImpl->add(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<int>*>(other.smart_ptr_.get_real_object()));
+
+					return Tensor(result);
+				}
+				else
+				{
+					if (data_type == UINT8)
+					{
+						TensorImpl<uint8_t>* resultImpl;
+
+						resultImpl = new TensorImpl<uint8_t>;
+
+						intrusive_ptr<TensorImplBase> result(resultImpl);
+
+						resultImpl->add(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), *static_cast<TensorImpl<uint8_t>*>(other.smart_ptr_.get_real_object()));
+
+						return Tensor(result);
+					}
+				}
+			}
+
+			LTEN_ERR("Invalid tesor data type");
+			return Tensor();
+		}
+
 
 		friend Tensor operator-(float scalar, Tensor& rhs)
 		{
@@ -1067,6 +1180,12 @@ namespace lten {
 
 		Tensor mean(const uint32_t* axes, int naxes)
 		{
+			if (naxes == 1 && smart_ptr_.get_real_object()->get_ndims() == 1)
+			{
+				assert(axes[0] == 0);
+				return mean();
+			}
+
 			dtype data_type = smart_ptr_->get_data_type();
 
 			if (data_type == FLOAT32)
@@ -1116,12 +1235,12 @@ namespace lten {
 			return Tensor();
 		}
 
-		Tensor var(uint32_t axis)
+		Tensor var(uint32_t axis, bool unbiased = true)
 		{
-			return var(&axis, 1);
+			return var(&axis, 1, unbiased);
 		}
 
-		Tensor var(const uint32_t* axes, int naxes)
+		Tensor var(const uint32_t* axes, int naxes, bool unbiased = true)
 		{
 			dtype data_type = smart_ptr_->get_data_type();
 
@@ -1133,7 +1252,7 @@ namespace lten {
 
 				intrusive_ptr<TensorImplBase> result(resultImpl);
 
-				resultImpl->var(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), axes, naxes);
+				resultImpl->var(*static_cast<TensorImpl<float>*>(smart_ptr_.get_real_object()), axes, naxes, unbiased);
 
 				return Tensor(result);
 			}
@@ -1147,7 +1266,7 @@ namespace lten {
 
 					intrusive_ptr<TensorImplBase> result(resultImpl);
 
-					resultImpl->var(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), axes, naxes);
+					resultImpl->var(*static_cast<TensorImpl<int>*>(smart_ptr_.get_real_object()), axes, naxes, unbiased);
 
 					return Tensor(result);
 				}
@@ -1161,7 +1280,7 @@ namespace lten {
 
 						intrusive_ptr<TensorImplBase> result(resultImpl);
 
-						resultImpl->var(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), axes, naxes);
+						resultImpl->var(*static_cast<TensorImpl<uint8_t>*>(smart_ptr_.get_real_object()), axes, naxes, unbiased);
 
 						return Tensor(result);
 					}
@@ -2005,6 +2124,12 @@ namespace lten {
 			return static_cast<TensorImpl<Dtype>*>(smart_ptr_.get_real_object())->get_gradients_mdarray();
 		}
 
+#ifdef _DEBUG
+		void set_name(const char* name) 
+		{ 
+			smart_ptr_.get_real_object()->set_name(name);
+		}
+#endif
 
 
 		intrusive_ptr<TensorImplBase> get_smart_ptr() { return smart_ptr_; }

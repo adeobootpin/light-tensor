@@ -231,12 +231,17 @@ namespace lten {
 
 
 	template<typename Dtype>
-	void TensorImpl<Dtype>::release_resources()
+	void TensorImpl<Dtype>::release_all_resources()
 	{
 		int i;
 
 		delete md_array_base_;
 		delete gradient_ptr_;
+
+		if (own_misc_cpu_ptr_)
+		{
+			delete misc_cpu_ptr_;
+		}
 
 		if (own_misc_ptr1_)
 		{
@@ -293,6 +298,18 @@ namespace lten {
 			delete children_lock_[i];
 		}
 
+		if (data_ptr_tensor_)
+		{
+			int ref_count;
+
+			ref_count = data_ptr_tensor_->release();
+			if (ref_count == 0)
+			{
+				data_ptr_tensor_->release_all_resources();
+				delete data_ptr_tensor_;
+			}
+		}
+
 		if (misc_tensor_)
 		{
 			int ref_count;
@@ -300,7 +317,7 @@ namespace lten {
 			ref_count = misc_tensor_->release();
 			if (ref_count == 0)
 			{
-				misc_tensor_->release_resources();
+				misc_tensor_->release_all_resources();
 				delete misc_tensor_;
 			}
 		}
@@ -312,7 +329,7 @@ namespace lten {
 			ref_count = misc_int_tensor_->release();
 			if (ref_count == 0)
 			{
-				misc_int_tensor_->release_resources();
+				misc_int_tensor_->release_all_resources();
 				delete misc_int_tensor_;
 			}
 		}
@@ -634,6 +651,7 @@ namespace lten {
 		{
 			misc2_ = static_cast<Dtype>(scalar);
 			add_child(operand1);
+			operand1.dec_res_ref_count();
 			grad_fn_ = ::scalar_mul_backward;
 			set_autograd(true);
 		}
@@ -1157,14 +1175,12 @@ namespace lten {
 	}
 
 
-
 	template<typename Dtype>
 	void TensorImpl<Dtype>::add(TensorImpl<Dtype>& operand1, TensorImpl<Dtype>& operand2)
 	{
 		MultiDimArray<Dtype>* op1_md_array;
 		MultiDimArray<Dtype>* op2_md_array;
 		TensorOps options;
-
 
 
 		if (operand1.get_ndims() != operand2.get_ndims())
@@ -1221,6 +1237,7 @@ namespace lten {
 		if (operand1.autograd_on())
 		{
 			add_child(operand1);
+			operand1.dec_res_ref_count();
 			grad_fn_ = ::add_backward;
 			set_autograd(true);
 		}
@@ -1228,6 +1245,7 @@ namespace lten {
 		if (operand2.autograd_on())
 		{
 			add_child(operand2);
+			operand2.dec_res_ref_count();
 			grad_fn_ = ::add_backward;
 			set_autograd(true);
 		}
@@ -1625,6 +1643,10 @@ namespace lten {
 
 		if (operand1.autograd_on())
 		{
+			misc1_ = naxes;
+			misc_cpu_ptr_ = new uint32_t[naxes];
+			memcpy(misc_cpu_ptr_, axes, sizeof(uint32_t) * naxes);
+			own_misc_cpu_ptr_ = true;
 			add_child(operand1);
 			grad_fn_ = ::mean_backward;
 			set_autograd(true);
@@ -1633,7 +1655,7 @@ namespace lten {
 
 
 	template<typename Dtype>
-	void TensorImpl<Dtype>::var(TensorImpl& operand1, const uint32_t* axes, int naxes)
+	void TensorImpl<Dtype>::var(TensorImpl& operand1, const uint32_t* axes, int naxes, bool unbiased)
 	{
 		int i;
 		TensorOps options;
@@ -1679,14 +1701,14 @@ namespace lten {
 
 		if (CPU == options.device_type)
 		{
-			//cpu_var((Dtype*)get_data_ptr(), (Dtype*)operand1.get_data_ptr(), get_numels(), get_strides(), operand1.get_strides(), ndims_dst, ndims_src, operand1.get_sizes(), axes);
+			cpu_var((Dtype*)get_data_ptr(), (Dtype*)operand1.get_data_ptr(), get_numels(), get_strides(), operand1.get_strides(), ndims_dst, ndims_src, operand1.get_sizes(), axes, unbiased);
 		}
 		else
 		{
 			if (GPU == options.device_type)
 			{
 #ifdef USE_CUDA
-				gpu_var((Dtype*)get_data_ptr(), (Dtype*)operand1.get_data_ptr(), get_numels(), get_strides(), operand1.get_strides(), ndims_dst, ndims_src, operand1.get_sizes(), axes);
+				gpu_var((Dtype*)get_data_ptr(), (Dtype*)operand1.get_data_ptr(), get_numels(), get_strides(), operand1.get_strides(), ndims_dst, ndims_src, operand1.get_sizes(), axes, unbiased);
 #else
 				LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
 #endif
@@ -1901,12 +1923,13 @@ namespace lten {
 		LTEN_ERR_CHECK(allocate_from_buffer(dims, index, operand1.get_data_ptr(), false, &options));
 		operand1.add_ref();
 
-		misc_tensor_ = &operand1;
+		data_ptr_tensor_ = &operand1;
 
 		if (operand1.autograd_on())
 		{
 			add_child(operand1);
-			grad_fn_ = ::squeeze_backward;
+			grad_fn_ = nullptr; // so layer is 'skipped' during backprop for speed
+			//grad_fn_ = ::squeeze_backward;
 			set_autograd(true);
 		}
 
@@ -1955,17 +1978,19 @@ namespace lten {
 		LTEN_ERR_CHECK(allocate_from_buffer(dims, ndims + 1, operand1.get_data_ptr(), false, &options));
 		operand1.add_ref();
 
-		misc_tensor_ = &operand1;
+		data_ptr_tensor_ = &operand1;
 
 
 		if (operand1.autograd_on())
 		{
 			add_child(operand1);
-			grad_fn_ = ::unsqueeze_backward;
+			grad_fn_ = nullptr; // so layer is 'skipped' during backprop for speed
+			//grad_fn_ = ::unsqueeze_backward;
 			set_autograd(true);
 		}
 
 	}
+
 	template<typename Dtype>
 	void TensorImpl<Dtype>::transpose(TensorImpl& operand1, int dim1, int dim2)
 	{
@@ -2035,7 +2060,7 @@ namespace lten {
 
 
 		operand1.add_ref();
-		misc_tensor_ = &operand1;
+		data_ptr_tensor_ = &operand1;
 
 		if (operand1.autograd_on())
 		{
@@ -2152,6 +2177,7 @@ namespace lten {
 		if (operand1.autograd_on())
 		{
 			add_child(operand1);
+			operand1.dec_res_ref_count();
 			index_operand.add_ref();
 			misc_int_tensor_ = &index_operand;
 			grad_fn_ = ::index_backward;
@@ -2275,6 +2301,7 @@ namespace lten {
 		if (operand1.autograd_on())
 		{
 			add_child(operand1);
+			operand1.dec_res_ref_count();
 			grad_fn_ = ::repeat_backward;
 			set_autograd(true);
 		}
@@ -2333,6 +2360,7 @@ namespace lten {
 				LTEN_ERR("scratch buffer cannot be non-null if autograd is on");
 			}
 			add_child(operand1);
+			operand1.dec_res_ref_count();
 			misc1_ = nrepeats;
 			misc2_ = dim;
 			misc_ptr1_ = scratch;
@@ -2474,7 +2502,7 @@ namespace lten {
 	template int TensorImpl<float>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_data_memory, void* gradient_ptr, bool own_gradient_memory, TensorOps* options_ptr);
 	template int TensorImpl<float>::allocate(const std::initializer_list<uint64_t>& dims, TensorOps* options_ptr);
 	template int TensorImpl<float>::allocate(const uint64_t* dims_ptr, int ndims, TensorOps* options_ptr);
-	template void TensorImpl<float>::release_resources();
+	template void TensorImpl<float>::release_all_resources();
 	template void TensorImpl<float>::matmul(TensorImpl<float>& operand1, TensorImpl<float>& operand2);
 	template void TensorImpl<float>::sub_array(TensorImpl<float>& operand1, int index);
 	template void TensorImpl<float>::add_child(TensorImpl<float>& child);
@@ -2489,7 +2517,7 @@ namespace lten {
 	template void TensorImpl<float>::sum(TensorImpl<float>& operand1, int dim);
 	template void TensorImpl<float>::mean(TensorImpl<float>& operand1);
 	template void TensorImpl<float>::mean(TensorImpl<float>& operand1, const uint32_t* axes, int naxes);
-	template void TensorImpl<float>::var(TensorImpl<float>& operand1, const uint32_t* axes, int naxes);
+	template void TensorImpl<float>::var(TensorImpl<float>& operand1, const uint32_t* axes, int naxes, bool unbiased);
 	template void TensorImpl<float>::std(TensorImpl<float>& operand1, int dim);
 	template void TensorImpl<float>::log(TensorImpl<float>& operand1);
 	template void TensorImpl<float>::sig(TensorImpl<float>& operand1);
@@ -2513,7 +2541,7 @@ namespace lten {
 	template int TensorImpl<int>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_data_memory, void* gradient_ptr, bool own_gradient_memory, TensorOps* options_ptr);
 	template int TensorImpl<int>::allocate(const std::initializer_list<uint64_t>& dims, TensorOps* options_ptr);
 	template int TensorImpl<int>::allocate(const uint64_t* dims_ptr, int ndims, TensorOps* options_ptr);
-	template void TensorImpl<int>::release_resources();
+	template void TensorImpl<int>::release_all_resources();
 	template void TensorImpl<int>::matmul(TensorImpl<int>& operand1, TensorImpl<int>& operand2);
 	template void TensorImpl<int>::sub_array(TensorImpl<int>& operand1, int index);
 	template void TensorImpl<int>::add_child(TensorImpl<int>& child);
@@ -2528,7 +2556,7 @@ namespace lten {
 	template void TensorImpl<int>::sum(TensorImpl<int>& operand1, int dim);
 	template void TensorImpl<int>::mean(TensorImpl<int>& operand1);
 	template void TensorImpl<int>::mean(TensorImpl<int>& operand1, const uint32_t* axes, int naxes);
-	template void TensorImpl<int>::var(TensorImpl<int>& operand1, const uint32_t* axes, int naxes);
+	template void TensorImpl<int>::var(TensorImpl<int>& operand1, const uint32_t* axes, int naxes, bool unbiased);
 	template void TensorImpl<int>::std(TensorImpl<int>& operand1, int dim);
 	template void TensorImpl<int>::log(TensorImpl<int>& operand1);
 	template void TensorImpl<int>::sig(TensorImpl<int>& operand1);
@@ -2552,7 +2580,7 @@ namespace lten {
 	template int TensorImpl<uint8_t>::allocate_from_buffer(const std::initializer_list<uint64_t>& dims, void* data_ptr, bool own_data_memory, void* gradient_ptr, bool own_gradient_memory, TensorOps* options_ptr);
 	template int TensorImpl<uint8_t>::allocate(const std::initializer_list<uint64_t>& dims, TensorOps* options_ptr);
 	template int TensorImpl<uint8_t>::allocate(const uint64_t* dims_ptr, int ndims, TensorOps* options_ptr);
-	template void TensorImpl<uint8_t>::release_resources();
+	template void TensorImpl<uint8_t>::release_all_resources();
 	template void TensorImpl<uint8_t>::matmul(TensorImpl<uint8_t>& operand1, TensorImpl<uint8_t>& operand2);
 	template void TensorImpl<uint8_t>::sub_array(TensorImpl<uint8_t>& operand1, int index);
 	template void TensorImpl<uint8_t>::add_child(TensorImpl<uint8_t>& child);
@@ -2567,7 +2595,7 @@ namespace lten {
 	template void TensorImpl<uint8_t>::sum(TensorImpl<uint8_t>& operand1, int dim);
 	template void TensorImpl<uint8_t>::mean(TensorImpl<uint8_t>& operand1);
 	template void TensorImpl<uint8_t>::mean(TensorImpl<uint8_t>& operand1, const uint32_t* axes, int naxes);
-	template void TensorImpl<uint8_t>::var(TensorImpl<uint8_t>& operand1, const uint32_t* axes, int naxes);
+	template void TensorImpl<uint8_t>::var(TensorImpl<uint8_t>& operand1, const uint32_t* axes, int naxes, bool unbiased);
 	template void TensorImpl<uint8_t>::std(TensorImpl<uint8_t>& operand1, int dim);
 	template void TensorImpl<uint8_t>::log(TensorImpl<uint8_t>& operand1);
 	template void TensorImpl<uint8_t>::sig(TensorImpl<uint8_t>& operand1);

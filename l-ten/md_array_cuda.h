@@ -162,8 +162,9 @@ public:
 		if (own_memory_)
 		{
 			FreeMemoryOnGPU(data_ptr_);
+			data_ptr_ = nullptr;
+			numels_ = 0;
 		}
-		data_ptr_ = nullptr;
 	}
 
 	virtual CUDA_MultiDimArray& operator=(const CUDA_MultiDimArray& other)
@@ -190,7 +191,6 @@ public:
 		const uint64_t* other_dims_array;
 		uint64_t dims_result[MAX_DIMS];
 		CUDA_MultiDimArray result;
-		int original_ndims = 0;
 		bool broadcast_required;
 
 		if (ndims_ != other.GetNDims())
@@ -198,12 +198,6 @@ public:
 			LTEN_ERR("MultiDimArrays must have the same number of dimensions");
 		}
 
-		if (ndims_ < 3)
-		{
-			original_ndims = ndims_;
-			Reshape(3);
-			other.Reshape(3);
-		}
 
 		other_dims_array = other.GetSizes();
 
@@ -212,40 +206,13 @@ public:
 		result.Allocate(dims_result, ndims_, nullptr, false);
 
 
-		if (ndims_ > 2)
+		if (broadcast_required)
 		{
-			md_array_dim_iterator it(dims_result, ndims_ - 2);
-
-			for (auto higher_indices : it)
-			{
-				if (broadcast_required)
-				{
-					Dtype* result_data = result.GetDataPtr(higher_indices, ndims_ - 2, true);
-					Dtype* lhs_data = GetDataPtr(higher_indices, ndims_ - 2, true);
-					Dtype* rhs_data = other.GetDataPtr(higher_indices, ndims_ - 2, true);
-
-					gpu_sum(lhs_data, rhs_data, result_data, dims_array_[ndims_ - 2], dims_array_[ndims_ - 1], other_dims_array[ndims_ - 2], other_dims_array[ndims_ - 1]);
-				}
-				else
-				{
-					Dtype* result_data = result.GetDataPtr(higher_indices, ndims_ - 2);
-					Dtype* lhs_data = GetDataPtr(higher_indices, ndims_ - 2);
-					Dtype* rhs_data = other.GetDataPtr(higher_indices, ndims_ - 2);
-
-					gpu_sum(lhs_data, rhs_data, result_data, dims_array_[ndims_ - 2], dims_array_[ndims_ - 1], other_dims_array[ndims_ - 2], other_dims_array[ndims_ - 1]);
-				}
-			}
+			gpu_add(GetDataPtr(), other.GetDataPtr(), result.GetDataPtr(), result.GetNumels(), this->GetStrides(), other.GetStrides(), result.GetStrides(), this->GetSizes(), other.GetSizes(), result.GetSizes(), ndims_);
 		}
 		else
 		{
-			assert(0);
-		}
-
-		if (original_ndims)
-		{
-			Reshape(original_ndims);
-			other.Reshape(original_ndims);
-			result.Reshape(original_ndims);
+			gpu_add(result.GetNumels(), GetDataPtr(), other.GetDataPtr(), result.GetDataPtr());
 		}
 
 		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
@@ -318,75 +285,6 @@ public:
 		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
 	}
 
-
-	/*
-	CUDA_MultiDimArray operator*(const CUDA_MultiDimArray& other)
-	{
-		const uint64_t* other_dims_array;
-		uint64_t dims_result[MAX_DIMS];
-		CUDA_MultiDimArray result;
-		int original_ndims = 0;
-		bool broadcast_required;
-
-		if (ndims_ != other.GetNDims())
-		{
-			LTEN_ERR("MultiDimArrays must have the same number of dimensions");
-		}
-
-		if (ndims_ < 3)
-		{
-			original_ndims = ndims_;
-			Reshape(3);
-			other.Reshape(3);
-		}
-
-		other_dims_array = other.GetSizes();
-
-		broadcast_required = check_broadcast_required(other_dims_array, dims_result);
-
-		result.Allocate(dims_result, ndims_, nullptr, false);
-
-
-		if (ndims_ > 2)
-		{
-			md_array_dim_iterator it(dims_result, ndims_ - 2);
-
-			for (auto higher_indices : it)
-			{
-				if (broadcast_required)
-				{
-					Dtype* result_data = result.GetDataPtr(higher_indices, ndims_ - 2, true);
-					Dtype* lhs_data = GetDataPtr(higher_indices, ndims_ - 2, true);
-					Dtype* rhs_data = other.GetDataPtr(higher_indices, ndims_ - 2, true);
-
-					gpu_mul((Dtype*)lhs_data, (Dtype*)rhs_data, (Dtype*)result_data, dims_array_[ndims_ - 2], dims_array_[ndims_ - 1], other_dims_array[ndims_ - 2], other_dims_array[ndims_ - 1], static_cast<Dtype>(0));
-				}
-				else
-				{
-					Dtype* result_data = result.GetDataPtr(higher_indices, ndims_ - 2);
-					Dtype* lhs_data = GetDataPtr(higher_indices, ndims_ - 2);
-					Dtype* rhs_data = other.GetDataPtr(higher_indices, ndims_ - 2);
-
-					gpu_mul((Dtype*)lhs_data, (Dtype*)rhs_data, (Dtype*)result_data, dims_array_[ndims_ - 2], dims_array_[ndims_ - 1], other_dims_array[ndims_ - 2], other_dims_array[ndims_ - 1], static_cast<Dtype>(0));
-				}
-			}
-		}
-		else
-		{
-			assert(0);
-		}
-
-		if (original_ndims)
-		{
-			Reshape(original_ndims);
-			other.Reshape(original_ndims);
-			result.Reshape(original_ndims);
-		}
-
-		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
-	}
-	*/
-
 	CUDA_MultiDimArray operator*(const CUDA_MultiDimArray& other)
 	{
 		const uint64_t* other_dims_array;
@@ -424,19 +322,11 @@ public:
 		const uint64_t* other_dims_array;
 		uint64_t dims_result[MAX_DIMS];
 		CUDA_MultiDimArray result;
-		int original_ndims = 0;
 		bool broadcast_required;
 
 		if (ndims_ != other.GetNDims())
 		{
 			LTEN_ERR("MultiDimArrays must have the same number of dimensions");
-		}
-
-		if (ndims_ < 3)
-		{
-			original_ndims = ndims_;
-			Reshape(3);
-			other.Reshape(3);
 		}
 
 		other_dims_array = other.GetSizes();
@@ -445,45 +335,18 @@ public:
 
 		result.Allocate(dims_result, ndims_, nullptr, false);
 
-
-		if (ndims_ > 2)
+		if (broadcast_required)
 		{
-			md_array_dim_iterator it(dims_result, ndims_ - 2);
-
-			for (auto higher_indices : it)
-			{
-				if (broadcast_required)
-				{
-					Dtype* result_data = result.GetDataPtr(higher_indices, ndims_ - 2, true);
-					Dtype* lhs_data = GetDataPtr(higher_indices, ndims_ - 2, true);
-					Dtype* rhs_data = other.GetDataPtr(higher_indices, ndims_ - 2, true);
-
-					gpu_div((Dtype*)lhs_data, (Dtype*)rhs_data, (Dtype*)result_data, dims_array_[ndims_ - 2], dims_array_[ndims_ - 1], other_dims_array[ndims_ - 2], other_dims_array[ndims_ - 1]);
-				}
-				else
-				{
-					Dtype* result_data = result.GetDataPtr(higher_indices, ndims_ - 2);
-					Dtype* lhs_data = GetDataPtr(higher_indices, ndims_ - 2);
-					Dtype* rhs_data = other.GetDataPtr(higher_indices, ndims_ - 2);
-
-					gpu_div((Dtype*)lhs_data, (Dtype*)rhs_data, (Dtype*)result_data, dims_array_[ndims_ - 2], dims_array_[ndims_ - 1], other_dims_array[ndims_ - 2], other_dims_array[ndims_ - 1]);
-				}
-			}
+			gpu_div(GetDataPtr(), other.GetDataPtr(), result.GetDataPtr(), result.GetNumels(), this->GetStrides(), other.GetStrides(), result.GetStrides(), this->GetSizes(), other.GetSizes(), result.GetSizes(), ndims_);
 		}
 		else
 		{
-			assert(0);
-		}
-
-		if (original_ndims)
-		{
-			Reshape(original_ndims);
-			other.Reshape(original_ndims);
-			result.Reshape(original_ndims);
+			gpu_div(result.GetNumels(), GetDataPtr(), other.GetDataPtr(), result.GetDataPtr());
 		}
 
 		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
 	}
+	
 
 	CUDA_MultiDimArray matmul(CUDA_MultiDimArray& other, POINTER_ARRAYS* pointer_array = nullptr)
 	{
@@ -570,7 +433,6 @@ public:
 					(float*)rhs_data, lda, stridea, (float*)lhs_data, ldb, strideb, &beta, (float*)result_data, ldc, stridec, num_batches);
 			}
 
-			cudaDeviceSynchronize();
 		}
 		else
 		{
@@ -639,84 +501,6 @@ public:
 
 		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
 	}
-	/*
-	CUDA_MultiDimArray matmul(CUDA_MultiDimArray& other)
-	{
-		const uint64_t* other_dims_array;
-		uint64_t dims_result[MAX_DIMS];
-		CUDA_MultiDimArray result;
-		uint64_t M;
-		uint64_t N;
-		uint64_t K;
-		float alpha;
-		float beta;
-		int lda;
-		int ldb;
-		int ldc;
-		int original_ndims = 0;
-		bool broadcast_required;
-
-		if (ndims_ != other.GetNDims())
-		{
-			LTEN_ERR("MultiDimArrays must have the same number of dimensions");
-		}
-
-		if (ndims_ < 3)
-		{
-			original_ndims = ndims_;
-			Reshape(3);
-			other.Reshape(3);
-		}
-
-		other_dims_array = other.GetSizes();
-		if (dims_array_[ndims_ - 1] != other_dims_array[ndims_ - 2]) // check matrix dimension compatibility
-		{
-			LTEN_ERR("MultiDimArrays must have compatiple dimensions");
-		}
-
-
-		broadcast_required = check_broadcast_required(other_dims_array, dims_result, true);
-
-		result.Allocate(dims_result, ndims_, nullptr, false);
-
-
-		md_array_dim_iterator it(dims_result, ndims_ - 2);
-
-		M = dims_result[ndims_ - 2];
-		N = dims_result[ndims_ - 1];
-		K = dims_array_[ndims_ - 1];
-
-		cublasStatus_t status;
-		cublasHandle_t hCuBlas;
-
-		hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(device_index_);
-
-		alpha = 1.0f;
-		beta = 0.0f;
-		lda = static_cast<int>(N);
-		ldb = static_cast<int>(K);
-		ldc = static_cast<int>(N);
-
-		for (auto higher_indices : it)
-		{
-			Dtype* result_data = result.GetDataPtr(higher_indices, ndims_ - 2, broadcast_required);
-			Dtype* lhs_data = GetDataPtr(higher_indices, ndims_ - 2, broadcast_required);
-			Dtype* rhs_data = other.GetDataPtr(higher_indices, ndims_ - 2, broadcast_required);
-
-			status = cublasSgemm(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, static_cast<int>(N), static_cast<int>(M), static_cast<int>(K), &alpha,
-				(float*)rhs_data, lda, (float*)lhs_data, ldb, &beta, (float*)result_data, ldc);
-		}
-
-		if (original_ndims)
-		{
-			Reshape(original_ndims);
-			other.Reshape(original_ndims);
-			result.Reshape(original_ndims);
-		}
-
-		return CUDA_MultiDimArray(result.GetSizes(), result.GetNDims(), result.GetDataPtr(), true);
-	}
-	*/
 
 	CUDA_MultiDimArray transpose(int dim_1, int dim_2)
 	{

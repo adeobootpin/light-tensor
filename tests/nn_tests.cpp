@@ -62,7 +62,9 @@ int neural_network_test()
 
 	input = lten::AllocateTensor({ batch_size, 1, 1, 4 }, nullptr);
 	target = lten::AllocateTensor({ batch_size, 1, 1, 4 }, nullptr);
-	input.set_autograd(true);
+	input.set_accumulate_gradients(true);
+	target.set_accumulate_gradients(true);
+	//input.set_autograd(true);
 
 	input_ptr = (float*)input.get_data_ptr();
 	target_ptr = (float*)target.get_data_ptr();

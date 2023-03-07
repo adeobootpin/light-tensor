@@ -83,9 +83,11 @@ namespace lten {
 		virtual int get_device_index() { assert(0);  return 0; }
 		virtual void backward(MultiDimArray<float>* top_gradient_ptr = nullptr) { assert(0); }
 		virtual void clear_gradients() { assert(0); }
-
+#ifdef _DEBUG
+		virtual void set_name(const char* name) { return; }
+#endif
 	public:
-		TensorImplBase() : ref_count_(0) {}
+		TensorImplBase() : ref_count_(0), res_ref_count_(0) {}
 
 		virtual ~TensorImplBase()
 		{
@@ -95,19 +97,29 @@ namespace lten {
 		int add_ref()
 		{
 			ref_count_++;
+			res_ref_count_++;
 			return ref_count_;
 		}
 
 		int release()
 		{
 			ref_count_--;
+			res_ref_count_--;
+
+			if (ref_count_ > 0 && res_ref_count_ == 0) // don't bother if ref_count_ == 0 since release_all_resources will be called
+			{
+				release_selected_resources(); // free memory no longer needed even if tensor is being held (reduce memory pressure by doing this)
+			}
 			return ref_count_;
 		}
 
-		virtual void release_resources() {}
+		virtual void release_all_resources() {}
+		virtual void release_selected_resources() {}
 
 	private:
 		mutable std::atomic<int> ref_count_;
+	protected:
+		mutable std::atomic<int> res_ref_count_;
 	};
 
 	template<typename Dtype>
@@ -160,7 +172,33 @@ namespace lten {
 		int allocate(const uint64_t* dims_ptr, int ndims, TensorOps* options_ptr = nullptr);
 
 
-		virtual void release_resources();
+		void release_all_resources();
+		void dec_res_ref_count()
+		{
+			if (md_array_base_)
+			{
+				if (md_array_base_->OwnsMemory())
+				{
+					res_ref_count_--;
+				}
+				else
+				{
+					if (data_ptr_tensor_)
+					{
+						data_ptr_tensor_->dec_res_ref_count();
+					}
+				}
+			}
+		}
+
+		void release_selected_resources()
+		{
+			if (md_array_base_)
+			{
+				//md_array_base_->ReleaseResources();
+			}
+		}
+
 
 		MultiDimArray<Dtype>* get_mdarray()
 		{
@@ -174,7 +212,7 @@ namespace lten {
 
 		void add_child(TensorImpl&);
 		virtual void backward(MultiDimArray<Dtype>* top_gradient_ptr = nullptr);
-		void do_backward(MultiDimArray<Dtype>* top_gradient_ptr);
+		void do_backward(MultiDimArray<Dtype>* top_gradient_ptr, bool free_top_gradient = false);
 		virtual void clear_gradients();
 		void set_graph_ref_count();
 
@@ -196,7 +234,7 @@ namespace lten {
 		void sum(TensorImpl& operand1, int dim);
 		void mean(TensorImpl& operand1);
 		void mean(TensorImpl& operand1, const uint32_t* axes, int naxes);
-		void var(TensorImpl& operand1, const uint32_t* axes, int naxes);
+		void var(TensorImpl& operand1, const uint32_t* axes, int naxes, bool unbiased);
 		void std(TensorImpl& operand1, int dim);
 		void sub_array(TensorImpl& operand1, int index); // initialize TensorImpl as a sub array of another (for [][][]... array indexing)
 		void reshape(TensorImpl& operand1, const uint64_t* dims, int ndims);
@@ -211,15 +249,19 @@ namespace lten {
 
 		void(*grad_fn_)(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, TensorImpl** children_ptr_array, int child_index, TensorImpl* parent_ptr);
 
-		//void set_name(const char* name) { strcpy_s(name_, 100, name); }
-		//char name_[100];
-
+#ifdef _DEBUG
+		void set_name(const char* name) { strcpy_s(name_, 20, name); }
+		char name_[20];
+#endif
 		uint64_t misc1_; // can be used to store anything (e.g. dimension index for use in back propagation)
 		double misc2_; // can be used to store anything (e.g. a scalar for use in back propagation)
-		void* misc_ptr1_; // can be used to store anything that requires more than an int
-		void* misc_ptr2_; // can be used to store anything that requires more than an int
+		void* misc_ptr1_; // can be used to store anything that requires more than an int (on same device as tensor)
+		void* misc_ptr2_; // can be used to store anything that requires more than an int (on same device as tensor)
+		void* misc_cpu_ptr_; // can be used to store anything that requires more than an int (on CPU) Note: plan is to deprecate misc_ptrx_ because implicit device type can be problematic e.g. when a cpu buffer is required for GPU tensor
 		bool own_misc_ptr1_; // pointer onwnership 
 		bool own_misc_ptr2_;
+		bool own_misc_cpu_ptr_;
+		TensorImpl* data_ptr_tensor_; // store backup tensor for views
 		TensorImpl* misc_tensor_; // store anything (of type Dtype) that is best kept in tensor form
 		TensorImpl<int>* misc_int_tensor_; // store anything (of type int) that is best kept in tensor form
 		int graph_ref_count_;
@@ -254,15 +296,20 @@ namespace lten {
 			auto_accumulate_gradients_ = false;
 			gradient_ptr_ = nullptr;
 			grad_fn_ = nullptr;
-			//name_[0] = '\0';
 			misc1_ = 0;
 			misc2_ = 0;
 			misc_ptr1_ = nullptr;
 			misc_ptr2_ = nullptr;
+			misc_cpu_ptr_ = nullptr;
 			own_misc_ptr1_ = false;
 			own_misc_ptr2_ = false;
+			own_misc_cpu_ptr_ = false;
+			data_ptr_tensor_ = nullptr;
 			misc_tensor_ = nullptr;
 			misc_int_tensor_ = nullptr;
+#ifdef _DEBUG
+			name_[0] = '\0';
+#endif
 		}
 
 	};

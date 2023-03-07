@@ -3,6 +3,26 @@
 #include "lten.h"
 
 
+void memory_test(float* dst, float* src, int numels);
+void memory_test()
+{
+	lten::Tensor a;
+	lten::Tensor b;
+
+	a = lten::AllocateTensor({ 256 * 1024 * 1024 });
+	b = lten::AllocateTensor({ 256 * 1024 * 1024 });
+
+	//a = lten::AllocateTensor({ 16 * 4 * 96 });
+	//b = lten::AllocateTensor({ 16 * 4 * 96 });
+
+
+
+	a = a.to(lten::GPU);
+	b = b.to(lten::GPU);
+
+	memory_test((float*)b.get_data_ptr(), (float*)a.get_data_ptr(), a.get_numels());
+}
+
 void mul_test()
 {
 	int i;
@@ -213,6 +233,7 @@ int layerNorm_test()
 
 	lten::LayerNorm ln(768, true);
 	ln.init();
+	ln.train(true); // only way this works for now.
 	ln.to(lten::GPU);
 
 

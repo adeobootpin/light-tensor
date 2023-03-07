@@ -773,34 +773,6 @@ void gpu_fill(Dtype* memory, uint64_t len, Dtype* value)
 }
 
 
-void gpu_scalar_mul(float alpha, float* A, float* C, uint64_t height_A, uint64_t width_A, uint64_t height_C, uint64_t width_C)
-{
-	int max_height;
-	int max_width;
-	uint64_t len;
-
-	dim3 dimGrid;
-	dim3 dimBlock;
-
-	dimBlock.y = DEFA_BLOCK_Y;
-	dimBlock.x = DEFA_BLOCK_X;
-
-	max_height = max((int)height_A, (int)height_C);
-	max_width = max((int)width_A, (int)width_C);
-
-	dimGrid.x = (int)ceil((float)max_width / (float)dimBlock.x);
-	dimGrid.y = (int)ceil((float)max_height / (float)dimBlock.y);
-
-	len = height_A * width_A;
-	gpu_scalar_mul<float>(A, A, alpha, len); // need to fix this!!! cannot modify inputs!!!
-
-	gpu_axpy_kernel << <dimGrid, dimBlock >> > (A, C, (int)height_A, (int)width_A, (int)height_C, (int)width_C, max_height, max_width);
-
-
-	gpu_scalar_mul<float>(A, A, 1.0f/alpha, len); // TODO: need to fix this!!!
-}
-
-
 __global__ void gpu_sgd_step_kernel(float* weight_ptr, float* weight_grad_ptr, float* velocity_ptr, int64_t numels, float mo, float wd, float lr)
 {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;

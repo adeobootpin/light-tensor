@@ -213,6 +213,7 @@ public:
 	const uint64_t* GetStrides() const { return strides_array_; }
 	int GetNDims() const { return ndims_; }
 	void SetMemoryOwnership(bool own_memory) { own_memory_ = own_memory; }
+	bool OwnsMemory() { return own_memory_; }
 
 	MultiDimArray<uint64_t> GetSizesMdArray()
 	{
@@ -379,13 +380,49 @@ public:
 		return 0;
 	}
 
+	//int Reshape(const uint64_t* dims, int ndims) const
+	int Reshape(const uint64_t* dims, int ndims)
+	{
+		int i;
+		uint64_t numels;
+		//uint64_t strides_array[MAX_DIMS];
+		//uint64_t dims_array[MAX_DIMS];
+
+		numels = 1;
+		for (i = 0; i < ndims; i++)
+		{
+			numels *= dims[i];
+		}
+
+		if (numels != numels_)
+		{
+			LTEN_ERR("Reshape requires the number of elements to remain unchanged");
+			return -1;
+		}
+
+		numels = 1;
+		for (i = ndims - 1; i >= 0; i--)
+		{
+			strides_array_[i] = numels;
+			dims_array_[i] = dims[i];
+			numels *= dims_array_[i];
+		}
+
+		//memcpy(dims_array_, dims_array, sizeof(uint64_t) * ndims);
+		//memcpy(strides_array_, strides_array, sizeof(uint64_t) * ndims);
+		ndims_ = ndims;
+
+		return 0;
+	}
+
 	virtual void ReleaseResources()
 	{
 		if (own_memory_)
 		{
 			delete data_ptr_;
+			data_ptr_ = nullptr;
+			numels_ = 0;
 		}
-		data_ptr_ = nullptr;
 	}
 
 	Dtype& operator()(const uint64_t* dims, int ndims, bool broadcast = false) const

@@ -313,6 +313,7 @@ template<typename Dtype>
 void cpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes)
 {
 	uint64_t offset_dst;
+	uint32_t partial_offset_dst;
 	uint64_t u64i;
 	int i;
 	uint64_t len;
@@ -329,13 +330,26 @@ void cpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_
 		len *= dims_src[axes[i]];
 	}
 
-	int xx;
 
-	xx = offs_calc.GetSrcOffset(0, 0);
-	xx = offs_calc.GetSrcOffset(0, 1);
-	xx = offs_calc.GetSrcOffset(0, 2);
+	for (offset_dst = 0; offset_dst < numels; offset_dst++)
+	{
+		sum = static_cast<Dtype>(0);
+
+		partial_offset_dst = offs_calc.GetPartialSrcOffset_d(offset_dst);;
+		
+		for (u64i = 0; u64i < len; u64i++)
+		{
+			uint32_t offset_src = offs_calc.GetPartialSrcOffset_s(u64i);
+			sum += src[offset_src + partial_offset_dst];
+
+			//sum += src[offs_calc.GetSrcOffset(static_cast<uint32_t>(offset_dst), static_cast<uint32_t>(u64i))];
+		}
+
+		dst[offset_dst] = sum / static_cast<Dtype>(len);
+	}
 
 
+	/*
 	for (offset_dst = 0; offset_dst < numels; offset_dst++)
 	{
 		sum = static_cast<Dtype>(0);
@@ -347,7 +361,7 @@ void cpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_
 
 		dst[offset_dst] = sum / static_cast<Dtype>(len);
 	}
-	
+	*/
 
 	/*
 	OffsetCalc_mean_std_simple offs_calc(strides_dst, strides_src, ndims_dst, ndims_src, dims_src, axes);
@@ -455,10 +469,22 @@ void cpu_mean_backward(Dtype* dst, const Dtype* src, const uint64_t numels, cons
 }
 
 
+template<typename Dtype>
+void cpu_mean_backward(Dtype* dst, const Dtype* src, const uint64_t numoutputs, OffsetCalc_broadcast* offs, Dtype scale)
+{
+	int i;
+	uint32_t index;
+
+	for (i = 0; i < numoutputs; i++)
+	{
+		index = offs->GetOffset(i);
+		dst[i] = scale * src[index];
+	}
+}
 
 // ND tensor variance
 template<typename Dtype>
-void cpu_var(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride)
+void cpu_var(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode)
 {
 	uint64_t i;
 	uint64_t offset_src;
@@ -479,7 +505,14 @@ void cpu_var(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t
 			mean += src[offset_src];
 			offset_src += stride;
 		}
-		mean = mean / static_cast<Dtype>(dim_size);
+		if (sample_mode)
+		{
+			mean /= static_cast<Dtype>(dim_size - 1);
+		}
+		else
+		{
+			mean /= static_cast<Dtype>(dim_size);
+		}
 
 		offset_src = (offset_dst - rem) * ratio + rem; // calculate corresponding offset in src buffer given an offset in the destination buffer
 		var = static_cast<Dtype>(0);
@@ -490,16 +523,126 @@ void cpu_var(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t
 			offset_src += stride;
 		}
 
-		if (dim_size > 1)
+		if (sample_mode)
 		{
 			var /= static_cast<Dtype>(dim_size - 1);
 		}
+		else
+		{
+			var /= static_cast<Dtype>(dim_size);
+		}
+
 		dst[offset_dst] = var;
 	}
 }
 
+template<typename Dtype>
+void cpu_var(Dtype* dst, const Dtype* src, const uint64_t num_outputs, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, bool unbiased)
+{
+	uint64_t i;
+	uint64_t j;
+	uint64_t loop_count;
+	uint32_t partial_offset;
+	uint32_t src_offset;
+	uint32_t num_inputs;
+	int naxes;
+	Dtype var;
 
-// ND tensor mean backward
+	Dtype mean;
+	Dtype count;
+	Dtype mean_b;
+	Dtype count_b;
+	Dtype Ms_b;
+	Dtype n_ab;
+	Dtype temp;
+	Dtype delta;
+	Dtype Ms;
+
+	OffsetCalc_mean_var offs_calc(strides_dst, strides_src, ndims_dst, ndims_src, dims_src, axes);
+	naxes = ndims_src - ndims_dst;
+	
+	num_inputs = 1;
+	for (i = 0; i < ndims_src; i++)
+	{
+		num_inputs *= dims_src[i];
+	}
+
+	loop_count = num_inputs / num_outputs;
+
+	for (i = 0; i < num_outputs; i++)
+	{
+		partial_offset = offs_calc.GetPartialSrcOffset_d(i);
+		src_offset = offs_calc.GetPartialSrcOffset_s(0);
+		
+		mean = src[partial_offset + src_offset];
+		Ms = 0;
+		count = 1.0f;
+
+		for (j = 1; j < loop_count; j++)
+		{
+			src_offset = offs_calc.GetPartialSrcOffset_s(j);
+
+			count_b = 1;
+			mean_b = src[partial_offset + src_offset];
+			Ms_b = 0;
+
+			n_ab = count + count_b;
+			temp = 1.0f / n_ab;
+
+			delta = mean_b - mean;
+			mean = ((count * mean) + (count_b * mean_b)) * temp;
+			Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
+			count = n_ab;
+		}
+
+		if (unbiased)
+		{
+			dst[i] = Ms / (loop_count - 1);
+		}
+		else
+		{
+			dst[i] = Ms / loop_count;
+		}
+		
+	}
+
+	/*
+	// simple (non-Welford version)
+	for (i = 0; i < num_outputs; i++)
+	{
+		float mean = 0;
+		partial_offset = offs_calc.GetPartialSrcOffset_d(i);
+		for (j = 0; j < loop_count; j++)
+		{
+			src_offset = offs_calc.GetPartialSrcOffset_s(j);
+			mean += src[partial_offset + src_offset];
+		}
+		mean = mean / (loop_count - 1);
+
+		var = 0;
+		for (j = 0; j < loop_count; j++)
+		{
+			src_offset = offs_calc.GetPartialSrcOffset_s(j);
+			var += pow(src[partial_offset + src_offset] - mean, 2.0f);
+		}
+
+		if (unbiased)
+		{
+			var = var / (loop_count - 1);
+		}
+		else
+		{
+			var = var / loop_count;
+		}
+		
+
+		dst[i] = var;
+	}
+	*/
+
+}
+
+// ND tensor variance backward
 template<typename Dtype>
 void cpu_var_backward(Dtype* dst, const Dtype* src, const Dtype* op1, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride)
 {
@@ -563,7 +706,16 @@ void cpu_std(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t
 			mean += src[offset_src];
 			offset_src += stride;
 		}
-		mean = mean / static_cast<Dtype>(dim_size);
+		
+		if (sample_mode)
+		{
+			mean = mean / static_cast<Dtype>(dim_size - 1);
+		}
+		else
+		{
+			mean = mean / static_cast<Dtype>(dim_size);
+		}
+
 
 		offset_src = (offset_dst - rem) * ratio + rem; // calculate corresponding offset in src buffer given an offset in the destination buffer
 		var = static_cast<Dtype>(0);
@@ -574,17 +726,15 @@ void cpu_std(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t
 			offset_src += stride;
 		}
 
-		if (dim_size > 1)
+		if (sample_mode)
 		{
-			if (sample_mode)
-			{
-				var /= static_cast<Dtype>(dim_size - 1);
-			}
-			else
-			{
-				var /= static_cast<Dtype>(dim_size);
-			}
+			var /= static_cast<Dtype>(dim_size - 1);
 		}
+		else
+		{
+			var /= static_cast<Dtype>(dim_size);
+		}
+
 		//dst[offset_dst] = static_cast<Dtype>(powf(static_cast<float>(var + 1e-5), 0.5));
 		dst[offset_dst] = static_cast<Dtype>(powf(static_cast<float>(var), 0.5));
 	}
@@ -636,6 +786,213 @@ void cpu_std_backward(Dtype* dst, const Dtype* src, const Dtype* op1, const Dtyp
 		}
 
 	}
+
+}
+
+template<typename Dtype>
+void cpu_layer_norm(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, Dtype* weight, Dtype* bias, Dtype* ln, Dtype* sd)
+{
+	uint32_t i;
+	uint32_t j;
+	uint32_t num_workers;
+	uint32_t loop_count;
+	uint32_t ln_dim;
+	uint32_t src_offset;
+
+	Dtype mean;
+	Dtype count;
+	Dtype mean_b;
+	Dtype count_b;
+	Dtype Ms_b;
+	Dtype n_ab;
+	Dtype temp;
+	Dtype delta;
+	Dtype Ms;
+	Dtype std;
+	Dtype inv_std;
+	Dtype scale;
+	float epsilon = 1e-5;
+
+	ln_dim = dims_src[ndims_src - 1];
+	
+	num_workers = numels / ln_dim;
+
+	scale = 1.0f / ln_dim;
+
+	for (i = 0; i < num_workers; i++)
+	{
+		src_offset = i * ln_dim;
+
+		mean = src[src_offset];
+		Ms = 0;
+		count = 1.0f;
+
+		for (j = 1; j < ln_dim; j++) // traverse ln axis and compute var using Welford's online algorithm
+		{
+			count_b = 1;
+			mean_b = src[src_offset + j];
+			Ms_b = 0;
+
+			n_ab = count + count_b;
+			temp = 1.0f / n_ab;
+
+			delta = mean_b - mean;
+			mean = ((count * mean) + (count_b * mean_b)) * temp;
+			Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
+			count = n_ab;
+		}
+
+		std = sqrt(Ms * scale + epsilon);
+		inv_std = 1.0f / std;
+		sd[i] = std;
+
+		for (j = 0; j < ln_dim; j++) // traverse ln axis and compute layer norm
+		{
+			temp = src[src_offset + j];
+			temp = (temp - mean) * inv_std;
+
+			ln[src_offset + j] = temp;
+			if (weight)
+			{
+				ln[src_offset + j] = temp;
+				temp = temp * weight[j] + bias[j];
+			}
+
+			dst[src_offset + j] = temp; // offset_src == offset_dst
+		}
+	}
+}
+
+template<typename Dtype>
+void cpu_layer_norm_backwards(void* vlayer_norm, Dtype* x, Dtype* top_gradient, Dtype* bottom_gradient, const uint64_t* dst_dims, uint32_t ndims, const uint32_t* axes, uint32_t naxes, Dtype* feeder_gradient)
+{
+	lten::LayerNorm* layer_norm;
+	Dtype* ln;
+	Dtype* sd;
+	Dtype* wt;
+	Dtype* wt_grad;
+	Dtype* bias_grad;
+	uint32_t i;
+	uint32_t j;
+	uint64_t numels;
+	uint64_t loop_count;
+
+	layer_norm = (lten::LayerNorm*)vlayer_norm;
+
+	numels = 1;
+	for (i = 0; i < ndims; i++)
+	{
+		numels *= dst_dims[i];
+	}
+
+	ln = layer_norm->get_ln()->get_mdarray<Dtype>()->GetDataPtr();
+	sd = layer_norm->get_sd()->get_mdarray<Dtype>()->GetDataPtr();
+
+	if (layer_norm->is_affine())
+	{
+		uint32_t len;
+		float w_grd;
+		float b_grd;
+		float top_grd;
+		float wts;
+		uint32_t ln_dim;
+
+		wt = layer_norm->get_weights()->get_mdarray<Dtype>()->GetDataPtr();
+		wt_grad = layer_norm->get_weights()->get_gradients_mdarray<Dtype>()->GetDataPtr();
+		bias_grad = layer_norm->get_bias()->get_gradients_mdarray<Dtype>()->GetDataPtr();
+
+		ln_dim = dst_dims[ndims - 1];
+		len = numels / ln_dim;
+
+		for (i = 0; i < ln_dim; i++)
+		{
+			wts = wt[i];
+			w_grd = 0;
+			b_grd = 0;
+
+			for (j = 0; j < len; j++)
+			{
+				top_grd = top_gradient[j * ln_dim + i];
+				w_grd += top_grd * ln[j * ln_dim + i];
+				b_grd += top_grd;
+
+				feeder_gradient[j * ln_dim + i] = top_grd * wts;
+			}
+
+			wt_grad[i] = w_grd;
+			bias_grad[i] = b_grd;	
+			
+		}
+
+		//warps_per_block = 16;
+		//num_blocks = (dst_dims[ndims - 1] + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
+		//gpu_layer_norm_wt_bias_backward_kernel<Dtype> << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (wt_grad, bias_grad, top_gradient, feeder_gradient, ln, sd, wt, numels, dst_dims[ndims - 1], warps_per_block);
+	}
+	else
+	{
+		feeder_gradient = top_gradient;
+	}
+
+	loop_count = dst_dims[ndims - 1];
+
+	uint32_t offset;
+	uint32_t index;
+	uint32_t num_workers;
+	float m_g;
+	float f_g;
+	float tmp;
+	float invsd;
+	float l_n;
+	uint32_t ln_dim;
+	float inv_dim;
+	//float fg[4096];
+	//float ln[4096];
+
+
+	num_workers = numels / loop_count;
+	ln_dim = dst_dims[ndims - 1];
+	inv_dim = 1.0f / dst_dims[ndims - 1];
+
+	index = 0;
+	for (i = 0; i < num_workers; i++)
+	{
+		m_g = 0;
+		tmp = 0;
+		invsd = 1.0f / sd[i];
+
+		for (j = 0; j < loop_count; j++)
+		{
+			f_g = feeder_gradient[i * loop_count + j];
+			l_n = ln[i * loop_count + j];
+			m_g -= f_g * invsd;
+			tmp -= f_g * l_n;
+		}
+
+		for (j = 0; j < loop_count; j++)
+		{
+			f_g = feeder_gradient[i * loop_count + j];
+			l_n = ln[i * loop_count + j];
+			bottom_gradient[i * loop_count + j] = (f_g + inv_dim * l_n * tmp) *  invsd + inv_dim * m_g;
+		}
+
+	}
+
+	/*
+	index = 0;
+	for (i = 0; i < num_workers; i++)
+	{
+		invsd = 1.0f / sd[i];
+
+		for (j = 0; j < loop_count; j++)
+		{
+			f_g = feeder_gradient[index];
+			l_n = ln[index];
+
+			bottom_gradient[index] = (f_g + inv_dim * l_n * tmp) *  invsd + inv_dim * m_g;
+			index++;
+		}
+	}
+	*/
 
 }
 
@@ -751,6 +1108,8 @@ void cpu_transpose(float* src, float* dst, int dim_1, int dim_2,
 
 
 
+
+
 template void cpu_axpy<float>(uint64_t N, float alpha, float* X_ptr, float* Y_ptr, float* C_ptr);
 template void cpu_axpby<float>(uint64_t N, float alpha, float* X_ptr, float beta, float* Y_ptr, float* C_ptr);
 template void cpu_mul<float>(uint64_t N, float* A_ptr, float* B_ptr, float* C_ptr);
@@ -767,7 +1126,8 @@ template void cpu_sum<float>(const float* src, float* dst, const uint64_t numels
 template void cpu_sum_backward<float>(float* dst, const float* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 template void cpu_mean<float>(const float* src, float* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 template void cpu_mean_backward<float>(float* dst, const float* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
-template void cpu_var<float>(const float* src, float* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void cpu_mean_backward<float>(float* dst, const float* src, const uint64_t numoutputs, OffsetCalc_broadcast* offs, float scale);
+template void cpu_var<float>(const float* src, float* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
 template void cpu_var_backward<float>(float* dst, const float* src, const float* op1, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 template void cpu_std<float>(const float* src, float* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
 template void cpu_std_backward<float>(float* dst, const float* src, const float* op1, const float* std, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
@@ -794,7 +1154,8 @@ template void cpu_sum<int>(const int* src, int* dst, const uint64_t numels, cons
 template void cpu_sum_backward<int>(int* dst, const int* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 template void cpu_mean<int>(const int* src, int* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 template void cpu_mean_backward<int>(int* dst, const int* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
-template void cpu_var<int>(const int* src, int* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void cpu_mean_backward<int>(int* dst, const int* src, const uint64_t numoutputs, OffsetCalc_broadcast* offs, int scale);
+template void cpu_var<int>(const int* src, int* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
 template void cpu_var_backward<int>(int* dst, const int* src, const int* op1, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 template void cpu_std<int>(const int* src, int* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
 template void cpu_std_backward<int>(int* dst, const int* src, const int* op1, const int* std, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
@@ -821,7 +1182,8 @@ template void cpu_sum<uint8_t>(const uint8_t* src, uint8_t* dst, const uint64_t 
 template void cpu_sum_backward<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 template void cpu_mean<uint8_t>(const uint8_t* src, uint8_t* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 template void cpu_mean_backward<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
-template void cpu_var<uint8_t>(const uint8_t* src, uint8_t* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+template void cpu_mean_backward<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numoutputs, OffsetCalc_broadcast* offs, uint8_t scale);
+template void cpu_var<uint8_t>(const uint8_t* src, uint8_t* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
 template void cpu_var_backward<uint8_t>(uint8_t* dst, const uint8_t* src, const uint8_t* op1, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 template void cpu_std<uint8_t>(const uint8_t* src, uint8_t* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
 template void cpu_std_backward<uint8_t>(uint8_t* dst, const uint8_t* src, const uint8_t* op1, const uint8_t* std, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
@@ -1574,7 +1936,22 @@ void quantized_matmul(bool traspose_A, bool traspose_B, uint64_t M, uint64_t N, 
 }
 
 
-
+// newly implemented cpu functions (not optimized yet though)
 template void cpu_mean<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
 template void cpu_mean<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
 template void cpu_mean<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
+
+
+template void cpu_var<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, bool unbiased);
+template void cpu_var<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, bool unbiased);
+template void cpu_var<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, bool unbiased);
+
+template void cpu_layer_norm<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, float* weight, float* bias, float* ln, float* sd);
+template void cpu_layer_norm<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, int* weight, int* bias, int* ln, int* sd);
+template void cpu_layer_norm<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, uint8_t* weight, uint8_t* bias, uint8_t* ln, uint8_t* sd);
+
+template void cpu_layer_norm_backwards<float>(void* vlayer_norm, float* x, float* top_gradient, float* bottom_gradient, const uint64_t* dst_dims, uint32_t ndims, const uint32_t* axes, uint32_t naxes, float* feeder_gradient);
+template void cpu_layer_norm_backwards<int>(void* vlayer_norm, int* x, int* top_gradient, int* bottom_gradient, const uint64_t* dst_dims, uint32_t ndims, const uint32_t* axes, uint32_t naxes, int* feeder_gradient);
+template void cpu_layer_norm_backwards<uint8_t>(void* vlayer_norm, uint8_t* x, uint8_t* top_gradient, uint8_t* bottom_gradient, const uint64_t* dst_dims, uint32_t ndims, const uint32_t* axes, uint32_t naxes, uint8_t* feeder_gradient);
+
+

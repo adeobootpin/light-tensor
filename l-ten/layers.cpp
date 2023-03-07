@@ -243,6 +243,7 @@ namespace lten {
 
 		resultImpl->misc_ptr1_ = this;
 		resultImpl->add_child(*(static_cast<TensorImpl<float>*>(input.get_smart_ptr().get_real_object())));
+		static_cast<TensorImpl<float>*>(input.get_smart_ptr().get_real_object())->dec_res_ref_count();
 		resultImpl->set_grad_fn(softmax_cudnn_backward);
 		resultImpl->set_autograd(true);
 		
@@ -356,6 +357,7 @@ namespace lten {
 		TensorOps options;
 		int i;
 		int index;
+		void* scratch_c_buffer;
 		MultiDimArray<float> unsqueezed_a;
 
 		
@@ -393,18 +395,7 @@ namespace lten {
 			}		
 		}
 		unsqueezed_a.Allocate(unsqeezed_dims_a, ndims, (float*)A.get_data_ptr(), false);
-
-
-
-		if (!permuted_a_buffer_ || A.get_numels() != numels_a_)
-		{
-			numels_a_ = A.get_numels();
-			FreeMemoryOnGPU(permuted_a_buffer_);
-			AllocateMemoryOnGPU(&permuted_a_buffer_, sizeof(float) * numels_a_, false);
-
-			FreeMemoryOnGPU(scratch_a_buffer_);
-			AllocateMemoryOnGPU(&scratch_a_buffer_, sizeof(float) * numels_a_, false);	
-		}
+		
 
 
 		options.data_type = A.get_data_type();
@@ -415,14 +406,14 @@ namespace lten {
 		intrusive_ptr<TensorImplBase> result(resultImpl);
 		resultImpl->allocate(result_dims, ndims - 1, &options);
 
-		if (!scratch_c_buffer_ || resultImpl->get_numels() != numels_c_)
-		{
-			numels_c_ = resultImpl->get_numels();
-			FreeMemoryOnGPU(scratch_c_buffer_);
-			AllocateMemoryOnGPU(&scratch_c_buffer_, sizeof(float) * numels_c_, false);
-		}
-
 		GetPermutationStridesAndeDims(unsqueezed_a.GetSizes(), permuted_dims_a, permuted_strides_a, permutations_a, ndims);
+
+		if (!permuted_a_buffer_ || A.get_numels() != numels_a_)
+		{
+			numels_a_ = A.get_numels();
+			FreeMemoryOnGPU(permuted_a_buffer_);
+			AllocateMemoryOnGPU(&permuted_a_buffer_, sizeof(float) * numels_a_, false);
+		}
 
 		gpu_permute((float*)permuted_a_buffer_, unsqueezed_a.GetDataPtr(), ndims, unsqueezed_a.GetNumels(), permuted_strides_a, unsqueezed_a.GetStrides(), permutations_a);
 
@@ -451,8 +442,9 @@ namespace lten {
 		stride_b = N * A_sizes[5];
 		stride_c = A_sizes[0] * A_sizes[1] * A_sizes[2] * B_sizes[0] * B_sizes[1];
 
-		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, M, N, K, &alpha, (float*)B.get_data_ptr(), lda, stride_a, (float*)permuted_a_buffer_, ldb, stride_b, &beta, (float*)scratch_c_buffer_, ldc, stride_c, B_sizes[0]);
-		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, 7, 896, 96, &alpha, (float*)B.get_data_ptr(), 96, 672, (float*)permuted_a_buffer_, 96, 86016, &beta, (float*)scratch_c_buffer_, 7, 6272, 56);
+		AllocateMemoryOnGPU(&scratch_c_buffer, sizeof(float) * resultImpl->get_numels(), false);
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, M, N, K, &alpha, (float*)B.get_data_ptr(), lda, stride_a, (float*)permuted_a_buffer_, ldb, stride_b, &beta, (float*)scratch_c_buffer, ldc, stride_c, B_sizes[0]);
+		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, 7, 896, 96, &alpha, (float*)B.get_data_ptr(), 96, 672, (float*)permuted_a_buffer, 96, 86016, &beta, (float*)scratch_c_buffer_, 7, 6272, 56);
 
 
 		uint64_t temp_dims[7];
@@ -464,23 +456,29 @@ namespace lten {
 		temp_dims[5] = 1;
 		temp_dims[6] = B_sizes[1];
 		MultiDimArray<float> temp;		
-		temp.Allocate(temp_dims, 7, (float*)scratch_c_buffer_, false); //temp.Allocate({ 56, 2, 8, 56, 1, 1, 7 }, (float*)scratch_c_buffer_, false);
+		temp.Allocate(temp_dims, 7, (float*)scratch_c_buffer, false); //temp.Allocate({ 56, 2, 8, 56, 1, 1, 7 }, (float*)scratch_c_buffer_, false);
 		uint64_t permuted_strides_c[MAX_DIMS];
 		
 		GetPermutationStridesAndeDims(temp.GetSizes(), nullptr, permuted_strides_c, permutations_c, ndims);
 
-		gpu_permute((float*)resultImpl->get_data_ptr(), (float*)scratch_c_buffer_, ndims, resultImpl->get_numels(), permuted_strides_c, temp.GetStrides(), permutations_c);
+		gpu_permute((float*)resultImpl->get_data_ptr(), (float*)scratch_c_buffer, ndims, resultImpl->get_numels(), permuted_strides_c, temp.GetStrides(), permutations_c);
 
 
 		if (is_training_ || static_cast<TensorImpl<float>*>(A.get_smart_ptr().get_real_object())->autograd_on() || static_cast<TensorImpl<float>*>(B.get_smart_ptr().get_real_object())->autograd_on())
 		{
 			resultImpl->misc_ptr1_ = this;
 			resultImpl->add_child(*(static_cast<TensorImpl<float>*>(A.get_smart_ptr().get_real_object())));
-			resultImpl->add_child(*(static_cast<TensorImpl<float>*>(B.get_smart_ptr().get_real_object())));
+			resultImpl->add_child(*(static_cast<TensorImpl<float>*>(B.get_smart_ptr().get_real_object()))); // Note: for this function, it is imperative that both operands are added to the graph because memory is allocated for child[0] and gets freed by child[1]
+			static_cast<TensorImpl<float>*>(A.get_smart_ptr().get_real_object())->dec_res_ref_count();
 			resultImpl->set_grad_fn(pseudo_einsum1_backward);
 			resultImpl->set_autograd(true);
 		}
-
+		else
+		{
+			FreeMemoryOnGPU(permuted_a_buffer_);
+			permuted_a_buffer_ = nullptr;
+		}
+		FreeMemoryOnGPU(scratch_c_buffer);
 		return Tensor(result);
 	}
 
@@ -498,8 +496,7 @@ namespace lten {
 		// then
 		//      C = A.matmul(B.transpose(5,6))
 		//--------------------------------------------------------------------------------
-		int ndims;
-		uint64_t required_size;
+		int ndims;		
 		uint64_t numels;
 		TensorOps options;
 		TensorImpl<float>* resultImpl;
@@ -508,7 +505,7 @@ namespace lten {
 		uint64_t result_dims[MAX_DIMS];
 		uint32_t result_permutation[] = { 1, 2, 3, 4, 0, 5 }; // TODO set this up dynamically (move 0 to desired location and slide rest left)
 		int i;
-
+		void* scratch_buffer;
 
 		ndims = A.get_ndims();
 
@@ -542,6 +539,8 @@ namespace lten {
 			numels *= scratch_dims[i];
 		}
 
+		/*
+		uint64_t required_size;
 		if (is_training_ || static_cast<TensorImpl<float>*>(A.get_smart_ptr().get_real_object())->autograd_on())
 		{
 			required_size = std::max(numels, A.get_numels()); // need size A for backward proc
@@ -558,8 +557,10 @@ namespace lten {
 			AllocateMemoryOnGPU(&scratch_buffer_, sizeof(float) * required_size, false);
 			scratch_buffer_size_ = required_size;
 		}
+		*/
 
-		scratch.allocate_from_buffer(scratch_dims, ndims, scratch_buffer_, false);
+		AllocateMemoryOnGPU(&scratch_buffer, sizeof(float) * numels, false);
+		scratch.allocate_from_buffer(scratch_dims, ndims, scratch_buffer, false);
 
 		int M, N, K;
 		int lda;
@@ -586,8 +587,8 @@ namespace lten {
 		stride_b = A_sizes[5];
 		stride_c = A_sizes[0] * A_sizes[1] * A_sizes[2] * B_sizes[0] * B_sizes[1];
 
-		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, M, N, K, &alpha, (float*)B.get_data_ptr(), lda, stride_a, (float*)A.get_data_ptr(), ldb, stride_b, &beta, (float*)scratch_buffer_, ldc, stride_c, B_sizes[0]);
-		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, 7, 896, 96, &alpha, (float*)B.get_data_ptr(), 96, 672, (float*)A.get_data_ptr(), 5376, 96, &beta, (float*)scratch_buffer_, 7, 6272, 56);
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, M, N, K, &alpha, (float*)B.get_data_ptr(), lda, stride_a, (float*)A.get_data_ptr(), ldb, stride_b, &beta, (float*)scratch_buffer, ldc, stride_c, B_sizes[0]);
+		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_T, CUBLAS_OP_N, 7, 896, 96, &alpha, (float*)B.get_data_ptr(), 96, 672, (float*)A.get_data_ptr(), 5376, 96, &beta, (float*)scratch_buffer, 7, 6272, 56);
 
 		for (i = 0; i < ndims; i++)
 		{
@@ -599,7 +600,7 @@ namespace lten {
 		intrusive_ptr<TensorImplBase> result(resultImpl);
 		resultImpl->allocate(result_dims, ndims, &options);
 
-		gpu_permute((float*)resultImpl->get_data_ptr(), (float*)scratch_buffer_, ndims, resultImpl->get_numels(), resultImpl->get_strides(), scratch.get_strides(), result_permutation);
+		gpu_permute((float*)resultImpl->get_data_ptr(), (float*)scratch_buffer, ndims, resultImpl->get_numels(), resultImpl->get_strides(), scratch.get_strides(), result_permutation);
 
 
 		if (is_training_ || static_cast<TensorImpl<float>*>(A.get_smart_ptr().get_real_object())->autograd_on() || static_cast<TensorImpl<float>*>(B.get_smart_ptr().get_real_object())->autograd_on())
@@ -611,6 +612,7 @@ namespace lten {
 			resultImpl->set_autograd(true);
 		}
 
+		FreeMemoryOnGPU(scratch_buffer);
 		return Tensor(result);
 		
 		/*

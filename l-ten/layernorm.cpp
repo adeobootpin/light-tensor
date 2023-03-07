@@ -50,6 +50,7 @@ namespace lten {
 		uint64_t dims_tmp[MAX_DIMS];
 		int ndims_src;
 		int ndims_dst;
+		//Tensor mu;
 
 		//----------------------------------------
 		// only last dim supported as axis for now
@@ -111,17 +112,32 @@ namespace lten {
 		}
 
 
-		mu_ = AllocateTensor(dims_src, ndims_src - 1, &options);
+		//mu = AllocateTensor(dims_src, ndims_src - 1, &options);
 		sd_ = AllocateTensor(dims_src, ndims_src - 1, &options);
-		ln_ = AllocateTensor(dims_src, ndims_src, &options);
-		feeder_gradient_ = AllocateTensor(dims_src, ndims_src, &options);
+		ln_ = AllocateTensor(dims_src, ndims_src, &options);		
 		LTEN_ERR_CHECK(resultImpl->allocate(dims_src, ndims_src, &options));
 
 
 		if (CPU == options.device_type)
 		{
-			// TODO implement cpu version using faster Welford's online algorithm
+			if (affine_)
+			{
+				if (is_training_)
+				{
+					cpu_layer_norm((float*)resultImpl->get_data_ptr(), (float*)input.get_data_ptr(), input.get_numels(), resultImpl->get_strides(), input.get_strides(), ndims_dst, ndims_src, input.get_sizes(), axes_, (float*)weight_ptr_->get_data_ptr(), (float*)bias_ptr_->get_data_ptr(), (float*)ln_.get_data_ptr(), (float*)sd_.get_data_ptr());
+				}
+				else
+				{
+					cpu_layer_norm((float*)resultImpl->get_data_ptr(), (float*)input.get_data_ptr(), input.get_numels(), resultImpl->get_strides(), input.get_strides(), ndims_dst, ndims_src, input.get_sizes(), axes_, (float*)weight_ptr_->get_data_ptr(), (float*)bias_ptr_->get_data_ptr(), (float*)nullptr, (float*)nullptr);
+				}
+			}
+			else
+			{
+				cpu_layer_norm((float*)resultImpl->get_data_ptr(), (float*)input.get_data_ptr(), input.get_numels(), resultImpl->get_strides(), input.get_strides(), ndims_dst, ndims_src, input.get_sizes(), axes_, (float*)nullptr, (float*)nullptr, (float*)ln_.get_data_ptr(), (float*)sd_.get_data_ptr());
+				//cpu_layer_norm((float*)resultImpl->get_data_ptr(), (float*)input.get_data_ptr(), input.get_numels(), resultImpl->get_strides(), input.get_strides(), ndims_dst, ndims_src, input.get_sizes(), axes_, (float*)nullptr, (float*)nullptr, (float*)nullptr, (float*)nullptr);
+			}
 
+			/*
 			uint64_t dim_size;
 			uint64_t ratio;
 			const uint64_t* src_sizes;
@@ -129,6 +145,9 @@ namespace lten {
 			int axis;
 			int ndims;
 			const uint64_t* dims;
+			lten::Tensor temp1;
+			lten::Tensor temp2;
+			lten::Tensor temp3;
 
 			ndims = input.get_ndims();
 
@@ -142,28 +161,37 @@ namespace lten {
 			dim_size = src_sizes[axis];
 			ratio = src_strides[axis - 1] / src_strides[axis];
 
-			cpu_mean((float*)input.get_data_ptr(), (float*)mu_.get_data_ptr(), mu_.get_numels(), ratio, dim_size, src_strides[axis]);
-			cpu_std((float*)input.get_data_ptr(), (float*)sd_.get_data_ptr(), sd_.get_numels(), ratio, dim_size, src_strides[axis], false);
+			cpu_mean((float*)input.get_data_ptr(), (float*)mu.get_data_ptr(), mu.get_numels(), ratio, dim_size, src_strides[axis]);
+			//cpu_std((float*)input.get_data_ptr(), (float*)sd_.get_data_ptr(), sd_.get_numels(), ratio, dim_size, src_strides[axis], false);
+			cpu_var((float*)input.get_data_ptr(), (float*)sd_.get_data_ptr(), sd_.get_numels(), ratio, dim_size, src_strides[axis], false);
+			
+			int len = sd_.get_numels();
+			float* data = (float*)sd_.get_data_ptr();
+			for (i = 0; i < len; i++)
+			{
+				data[i] = powf(static_cast<float>(data[i] + 1e-5), 0.5f);
+			}
 
-			mu_ = mu_.unsqueeze(mu_.get_ndims());
+			mu = mu.unsqueeze(mu.get_ndims());
 
 			sd_ = sd_.unsqueeze(sd_.get_ndims());
 
-			temp1_ = input - mu_;
-			ln_ = temp1_.div(sd_);
+			temp1 = input - mu;
+			ln_ = temp1.div(sd_);
 
 			if (affine_)
 			{
-				temp2_ = ln_ * (*weight_ptr_);
-				temp3_ = temp2_ + (*bias_ptr_);
-				temp3_.get_mdarray<float>()->SetMemoryOwnership(false);
-				resultImpl->allocate_from_buffer(dims, ndims, temp3_.get_data_ptr(), true, &options);
+				temp2 = ln_ * (*weight_ptr_);
+				temp3 = temp2 + (*bias_ptr_);
+				temp3.get_mdarray<float>()->SetMemoryOwnership(false);
+				resultImpl->allocate_from_buffer(dims, ndims, temp3.get_data_ptr(), true, &options);
 			}
 			else
 			{
 				ln_.get_mdarray<float>()->SetMemoryOwnership(false);
 				resultImpl->allocate_from_buffer(dims, ndims, ln_.get_data_ptr(), true, &options);
 			}
+			*/
 		}
 		else
 		{
@@ -178,11 +206,13 @@ namespace lten {
 					}
 					else
 					{
+						LTEN_ERR("This has not been fully implemented/tested");
 						gpu_layer_norm((float*)resultImpl->get_data_ptr(), (float*)input.get_data_ptr(), input.get_numels(), resultImpl->get_strides(), input.get_strides(), ndims_dst, ndims_src, input.get_sizes(), axes_, (float*)weight_ptr_->get_data_ptr(), (float*)bias_ptr_->get_data_ptr(), (float*)nullptr, (float*)nullptr);
 					}
 				}
 				else
 				{
+					LTEN_ERR("This has not been fully implemented/tested");
 					gpu_layer_norm((float*)resultImpl->get_data_ptr(), (float*)input.get_data_ptr(), input.get_numels(), resultImpl->get_strides(), input.get_strides(), ndims_dst, ndims_src, input.get_sizes(), axes_, (float*)nullptr, (float*)nullptr, (float*)nullptr, (float*)nullptr);
 				}
 #else
@@ -202,7 +232,6 @@ namespace lten {
 			resultImpl->set_grad_fn(layernorm_backward);
 			resultImpl->set_autograd(true);
 		}
-
 
 		return Tensor(result);
 	}

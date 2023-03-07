@@ -830,10 +830,7 @@ namespace lten {
 		Tensor* get_weights() { return weight_ptr_; }
 		Tensor* get_bias() { return bias_ptr_; }
 		Tensor* get_ln() { return &ln_; }
-		Tensor* get_mu() { return &mu_; }
 		Tensor* get_sd() { return &sd_; }
-		Tensor* get_temp1() { return &temp1_; }
-		Tensor* get_feeder_gradient() { return &feeder_gradient_; }
 		void clear_gradients();
 		std::vector<Tensor*> get_all_weights();
 		void to(device target_device, int target_device_index = 0);
@@ -846,11 +843,6 @@ namespace lten {
 		Tensor eps_;
 		Tensor ln_;
 		Tensor sd_;
-		Tensor feeder_gradient_; // gradient flowing back from gamma if affine, ignored othersize (simply use top_gradient)
-		Tensor mu_;
-		Tensor temp1_;
-		Tensor temp2_;
-		Tensor temp3_;
 		float epsilon_ = 1e-5f;
 		uint64_t max_ones_vector_size_ = 0;
 		bool affine_;
@@ -1031,9 +1023,7 @@ namespace lten {
 		{
 			permuted_a_buffer_ = nullptr;
 			scratch_c_buffer_ = nullptr;
-			scratch_a_buffer_ = nullptr;
 			numels_a_ = 0;
-			numels_c_ = 0;
 		}
 
 		~Pseudo_Einsum_1() {}
@@ -1045,15 +1035,13 @@ namespace lten {
 		void to(device target_device, int target_device_index) {}
 
 		void* get_permuted_a_buffer() { return permuted_a_buffer_; }
-		void* get_scratch_a_buffer() { return scratch_a_buffer_; }
 		void* get_scratch_c_buffer() { return scratch_c_buffer_; }
+		void set_scratch_c_buffer(void* scratch_c_buffer) { scratch_c_buffer_ = scratch_c_buffer; }
 
 	private:
 		void* permuted_a_buffer_;
-		void* scratch_a_buffer_;
 		void* scratch_c_buffer_;
 		uint64_t numels_a_;
-		uint64_t numels_c_;
 	};
 
 	class Pseudo_Einsum_2 : public Module
@@ -1061,8 +1049,6 @@ namespace lten {
 	public:
 		Pseudo_Einsum_2()
 		{
-			scratch_buffer_ = nullptr;
-			scratch_buffer_size_ = 0;
 		}
 
 		~Pseudo_Einsum_2() {}
@@ -1072,11 +1058,8 @@ namespace lten {
 		void clear_gradients() {}
 		std::vector<Tensor*> get_all_weights() { std::vector<Tensor*> dud; return dud; }
 		void to(device target_device, int target_device_index) {}
-		void* get_scratch_buffer() { return scratch_buffer_; }
 
 	private:
-		void* scratch_buffer_;
-		uint64_t scratch_buffer_size_;
 
 	};
 

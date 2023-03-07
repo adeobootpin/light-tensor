@@ -64,6 +64,44 @@ struct OffsetCalc_broadcast
 			}
 		}
 	}
+
+	OffsetCalc_broadcast(const int num_dims, const uint64_t* op_dims, const uint64_t* output_dims, const uint64_t* op_strides, const uint64_t* output_strides) // use when only two tensors involved (Note: only versions of GetOffsets that return one offset are valid is using this construtor) 
+	{
+		uint32_t divisor;
+		uint32_t shift;
+		int i;
+
+		ndims = num_dims;
+
+		for (i = 0; i < ndims; i++)
+		{
+			divisor = (uint32_t)output_strides[i];
+
+			for (shift = 0; shift < 32; shift++)
+			{
+				if ((1U << shift) >= divisor)
+				{
+					break;
+				}
+			}
+
+			uint64_t one = 1;
+			uint64_t magic = ((one << 32) * ((one << shift) - divisor)) / divisor + 1;
+
+			div[i].magic = (uint32_t)magic;
+			div[i].shift = shift;
+			div[i].divisor = divisor;
+
+			if (op_dims[i] == output_dims[i])
+			{
+				operand_strides[i][0] = (uint32_t)op_strides[i];
+			}
+			else
+			{
+				operand_strides[i][0] = 0;
+			}
+		}
+	}
 	/*
 	OffsetCalc_broadcast(const int num_dims, const uint64_t* op_strides, const uint64_t* output_strides)
 	{
@@ -223,6 +261,447 @@ struct OffsetCalc_broadcast
 };
 
 
+struct OffsetCalc_reverse_broadcast // for generating output dim from operand dim that involves broadcast
+{
+	// For example, suppose output has shape {2, 16, 256, 96} and operand_1 has shape { 1, 16, 1, 96 }
+	// and operand_2 has shape { 2, 16, 256, 1 }
+	// Here, op1_broadcast_dims_ is 2 (number of dims that require broadcasting for operand 1),
+	// op2_broadcast_dims_ is 1 (number of dims that require broadcasting for operand 2),
+	// op1_broadcast_dims is { 2, 256 }
+	// op2_broadcast_dims is { 96 }
+	// op1_broadcast_strides is {256, 1}
+	// op1_broadcast_strides is {1}
+	// GetOffset:
+	// Given output index, the broadcast coordinates (w.r.t {2, 256}) can be deduced
+	// Coordinates of operand 1 can be deduced from the operand index
+	// Output coordintes can be deduced by 'weaving' the broadcast coordinated into the operand 1 coordinates
+	// Operand 2 coordinates can also be deduced
+	// Using these coordinates, offsets can be generated
+	OffsetCalc_reverse_broadcast(const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* output_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* output_strides)
+	{
+		uint32_t divisor;
+		uint32_t shift;
+		uint32_t broadcast_dims[MAX_DIMS];
+		uint32_t numels;
+		uint32_t i;
+		int j;
+
+		ndims_ = num_dims;
+		op1_broadcast_ndims_ = 0;
+
+		assert(MAX_DIMS <= sizeof(uint16_t) * 8); // increase size of bitmask if this changes
+		op1_bitmask_ = 0;
+		op2_bitmask_ = 0;
+
+		j = 0;
+		for (i = 0; i < ndims_; i++)
+		{
+			divisor = (uint32_t)op1_strides[i];
+
+			for (shift = 0; shift < 32; shift++)
+			{
+				if ((1U << shift) >= divisor)
+				{
+					break;
+				}
+			}
+
+			uint64_t one = 1;
+			uint64_t magic = ((one << 32) * ((one << shift) - divisor)) / divisor + 1;
+
+			div_[i].magic = (uint32_t)magic;
+			div_[i].shift = shift;
+			div_[i].divisor = divisor;
+
+			op1_strides_[i] = (uint32_t)op1_strides[i];
+			op2_strides_[i] = (uint32_t)op2_strides[i];
+			output_strides_[i] = (uint32_t)output_strides[i];
+
+			if (op1_dims[i] != output_dims[i])
+			{
+				assert(op1_dims[i] == 1);
+				broadcast_dims[op1_broadcast_ndims_] = (uint32_t)output_dims[i];
+				op1_broadcast_ndims_++;
+				op1_bitmask_ |= (1 << i); // save the broadcast positions
+
+				broadcast_dims_[j++] = i;
+			}
+
+			if (op2_dims[i] != output_dims[i])
+			{
+				op2_bitmask_ |= (1 << i); // save the broadcast positions
+			}
+		}
+
+
+		//
+		// create divsors etc. for broadcast dims
+		//
+		numels = 1;
+		for (j = op1_broadcast_ndims_ - 1; j >= 0; j--)
+		{
+			broadcast_strides_[j] = numels;
+			numels *= broadcast_dims[j];
+		}
+
+		for (i = 0; i < op1_broadcast_ndims_; i++)
+		{
+			divisor = (uint32_t)broadcast_strides_[i];
+
+			for (shift = 0; shift < 32; shift++)
+			{
+				if ((1U << shift) >= divisor)
+				{
+					break;
+				}
+			}
+
+			uint64_t one = 1;
+			uint64_t magic = ((one << 32) * ((one << shift) - divisor)) / divisor + 1;
+
+			broadcast_div_[i].magic = (uint32_t)magic;
+			broadcast_div_[i].shift = shift;
+			broadcast_div_[i].divisor = divisor;
+		}
+
+	}
+
+
+	LTEN_HOST_DEVICE void GetOffsets(uint32_t operand1_index, uint32_t output_index, uint32_t* operand2_offset, uint32_t* output_offset)
+	{
+		uint32_t op_offset;
+		uint32_t out_offset;
+		uint32_t coordinate;
+		uint32_t broadcast_coords[MAX_DIMS];
+
+		uint32_t i;
+		uint32_t j;
+
+
+		out_offset = 0;
+		op_offset = 0;
+		j = 0;
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; ++i)
+		{
+			if (i == ndims_)
+			{
+				break;
+			}
+
+			if (i < op1_broadcast_ndims_)
+			{
+				coordinate = ((((uint64_t)output_index * broadcast_div_[i].magic) >> 32) + output_index) >> broadcast_div_[i].shift;
+				output_index = output_index - coordinate * broadcast_div_[i].divisor;
+				switch (i) // generate compiler indexing and avoid placing broadcast_coords array into local memory
+				{
+				case 0:
+					broadcast_coords[0] = coordinate;
+					break;
+				case 1:
+					broadcast_coords[1] = coordinate;
+					break;
+				case 2:
+					broadcast_coords[2] = coordinate;
+					break;
+				case 3:
+					broadcast_coords[3] = coordinate;
+					break;
+				case 4:
+					broadcast_coords[4] = coordinate;
+					break;
+				case 5:
+					broadcast_coords[5] = coordinate;
+					break;
+				case 6:
+					broadcast_coords[6] = coordinate;
+					break;
+				case 7:
+					broadcast_coords[7] = coordinate;
+					break;
+				default:
+					assert(0); // add more cases if need be
+					break;
+				}
+			}
+
+			if (op1_bitmask_ & (1 << i))
+			{
+				switch (j) // generate compiler indexing and avoid placing broadcast_coords array into local memory
+				{
+				case 0:
+					coordinate = broadcast_coords[0];
+					break;
+				case 1:
+					coordinate = broadcast_coords[1];
+					break;
+				case 2:
+					coordinate = broadcast_coords[2];
+					break;
+				case 3:
+					coordinate = broadcast_coords[3];
+					break;
+				case 4:
+					coordinate = broadcast_coords[4];
+					break;
+				case 5:
+					coordinate = broadcast_coords[5];
+					break;
+				case 6:
+					coordinate = broadcast_coords[6];
+					break;
+				case 7:
+					coordinate = broadcast_coords[7];
+					break;
+				default:
+					assert(0); // add more cases if need be
+					break;
+				}
+				j++;
+			}
+			else
+			{
+				coordinate = ((((uint64_t)operand1_index * div_[i].magic) >> 32) + operand1_index) >> div_[i].shift;
+				operand1_index = operand1_index - coordinate * div_[i].divisor;
+			}
+			out_offset += coordinate * output_strides_[i];
+
+			if (!(op2_bitmask_ & (1 << i)))
+			{
+				op_offset += coordinate * op2_strides_[i];
+			}
+
+		}
+		*operand2_offset = op_offset;
+		*output_offset = out_offset;
+	}
+
+
+	LTEN_HOST_DEVICE uint32_t GetOffsets(uint32_t operand1_index, uint32_t output_index)
+	{
+		uint32_t out_offset;
+		uint32_t coordinate;
+		uint32_t broadcast_coords[MAX_DIMS];
+
+		uint32_t i;
+		uint32_t j;
+
+
+		out_offset = 0;
+		j = 0;
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; ++i)
+		{
+			if (i == ndims_)
+			{
+				break;
+			}
+
+			if (i < op1_broadcast_ndims_)
+			{
+				coordinate = ((((uint64_t)output_index * broadcast_div_[i].magic) >> 32) + output_index) >> broadcast_div_[i].shift;
+				output_index = output_index - coordinate * broadcast_div_[i].divisor;
+				broadcast_coords[i] = coordinate;
+			}
+
+			if (op1_bitmask_ & (1 << i))
+			{
+				coordinate = broadcast_coords[j++];
+			}
+			else
+			{
+				coordinate = ((((uint64_t)operand1_index * div_[i].magic) >> 32) + operand1_index) >> div_[i].shift;
+				operand1_index = operand1_index - coordinate * div_[i].divisor;
+			}
+			out_offset += coordinate * output_strides_[i];
+		}
+
+		return out_offset;
+	}
+
+	LTEN_HOST_DEVICE void GetOffsets_reference(uint32_t operand1_index, uint32_t output_index, uint32_t* operand2_offset, uint32_t* output_offset) // do not run this, keeping just for reference (GetOffsets is optimized version of this function)
+	{
+		uint32_t op_offset;
+		uint32_t out_offset;
+		uint32_t coordinate;
+		uint32_t broadcast_coords[MAX_DIMS];
+		uint32_t operand_coords[MAX_DIMS];
+		uint32_t output_coords[MAX_DIMS];
+
+		uint32_t i;
+		uint32_t j;
+
+
+		for (i = 0; i < op1_broadcast_ndims_; ++i)
+		{
+			coordinate = ((((uint64_t)output_index * broadcast_div_[i].magic) >> 32) + output_index) >> broadcast_div_[i].shift;
+			output_index = output_index - coordinate * broadcast_div_[i].divisor;
+			broadcast_coords[i] = coordinate;
+		}
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; ++i)
+		{
+			if (i == ndims_)
+			{
+				break;
+			}
+			coordinate = ((((uint64_t)operand1_index * div_[i].magic) >> 32) + operand1_index) >> div_[i].shift;
+			operand1_index = operand1_index - coordinate * div_[i].divisor;
+			operand_coords[i] = coordinate;
+
+			//printf("%d ", coordinate);
+		}
+
+		out_offset = 0;
+		op_offset = 0;
+		j = 0;
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; ++i)
+		{
+			if (i == ndims_)
+			{
+				break;
+			}
+			if (op1_bitmask_ & (1 << i))
+			{
+				assert(operand_coords[i] == 0);
+				output_coords[i] = broadcast_coords[j++];
+			}
+			else
+			{
+				output_coords[i] = operand_coords[i];
+			}
+
+			out_offset += output_coords[i] * output_strides_[i];
+
+			if (op2_bitmask_ & (1 << i))
+			{
+				operand_coords[i] = 0;
+			}
+			else
+			{
+				operand_coords[i] = output_coords[i];
+			}
+
+			op_offset += operand_coords[i] * op2_strides_[i];
+
+		}
+		*operand2_offset = op_offset;
+		*output_offset = out_offset;
+	}
+
+	LTEN_HOST_DEVICE void GetParialOffsets(uint32_t operand1_index, uint32_t* operand2_offset, uint32_t* output_offset)
+	{
+		uint32_t i;
+		uint32_t out_offset;
+		uint32_t coordinate;
+
+		out_offset = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; ++i)
+		{
+			if (i == ndims_)
+			{
+				break;
+			}
+
+			coordinate = ((((uint64_t)operand1_index * div_[i].magic) >> 32) + operand1_index) >> div_[i].shift;
+			operand1_index = operand1_index - coordinate * div_[i].divisor;
+
+			out_offset += coordinate * output_strides_[i];
+		}
+		*output_offset = out_offset;
+	}
+
+	LTEN_HOST_DEVICE uint32_t GetParialOffsets(uint32_t operand1_index, uint32_t* operand2_offset)
+	{
+		uint32_t i;
+		uint32_t out_offset;
+		uint32_t coordinate;
+
+		out_offset = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; ++i)
+		{
+			if (i == ndims_)
+			{
+				break;
+			}
+
+			coordinate = ((((uint64_t)operand1_index * div_[i].magic) >> 32) + operand1_index) >> div_[i].shift;
+			operand1_index = operand1_index - coordinate * div_[i].divisor;
+
+			out_offset += coordinate * output_strides_[i];
+		}
+		return out_offset;
+	}
+
+	LTEN_HOST_DEVICE uint32_t GetBroadcastOffset(uint32_t output_index)
+	{
+		uint32_t out_offset;
+		uint32_t coordinate;
+
+		uint32_t i;
+
+		out_offset = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; ++i)
+		{
+			if (i == op1_broadcast_ndims_)
+			{
+				break;
+			}
+
+			coordinate = ((((uint64_t)output_index * broadcast_div_[i].magic) >> 32) + output_index) >> broadcast_div_[i].shift;
+			output_index = output_index - coordinate * broadcast_div_[i].divisor;
+
+			out_offset += coordinate * output_strides_[broadcast_dims_[i]];
+		}
+
+		return out_offset;
+	}
+
+	Divider div_[MAX_DIMS];
+	Divider broadcast_div_[MAX_DIMS];
+	uint32_t op1_strides_[MAX_DIMS];
+	uint32_t op2_strides_[MAX_DIMS];
+	uint32_t output_strides_[MAX_DIMS];
+	uint32_t broadcast_strides_[MAX_DIMS];
+	uint32_t ndims_;
+	uint32_t op1_broadcast_ndims_;
+	uint16_t op1_bitmask_;
+	uint16_t op2_bitmask_;
+
+	uint8_t broadcast_dims_[MAX_DIMS];
+};
+
+
+
+
+
+
+
+
+
+
 struct OffsetCalc_transpose
 {
 	OffsetCalc_transpose(const int num_dims, const uint64_t* strides_dst, const uint64_t* strides_src)
@@ -322,7 +801,7 @@ struct OffsetCalc_transpose
 
 struct OffsetCalc_generic
 {
-	OffsetCalc_generic(const int num_dims, const uint64_t* strides )
+	OffsetCalc_generic(const int num_dims, const uint64_t* strides)
 	{
 		uint32_t divisor;
 		uint32_t shift;
@@ -415,7 +894,7 @@ struct OffsetCalc_mean_var
 		{
 			if ((bitmask_ & (1 << i)))
 			{
-				axes_strides_src[index_1] = static_cast<uint32_t>(strides_src[i]);				
+				axes_strides_src[index_1] = static_cast<uint32_t>(strides_src[i]);
 				axes_dims[index_1] = static_cast<uint32_t>(dims_src[i]);
 				index_1++;
 			}
@@ -492,7 +971,7 @@ struct OffsetCalc_mean_var
 		return 0;
 	}
 
-	LTEN_HOST_DEVICE uint32_t GetPartialSrcOffset_d(uint32_t dst_index ) // compute portion of src offset contributed by non axis coordinates
+	LTEN_HOST_DEVICE uint32_t GetPartialSrcOffset_d(uint32_t dst_index) // compute portion of src offset contributed by non axis coordinates
 	{
 		uint32_t offs;
 
@@ -504,7 +983,7 @@ struct OffsetCalc_mean_var
 #ifdef __NVCC__
 #pragma unroll
 #endif
-		for (i = 0; i < 8; ++i)
+		for (i = 0; i < MAX_DIMS; ++i)
 		{
 			if (i == ndims_dst_)
 			{
@@ -533,7 +1012,7 @@ struct OffsetCalc_mean_var
 #ifdef __NVCC__
 #pragma unroll
 #endif
-		for (i = 0; i < 8; ++i)
+		for (i = 0; i < MAX_DIMS; ++i)
 		{
 			if (i == naxes_)
 			{
@@ -642,7 +1121,7 @@ struct OffsetCalc_mean_var_old
 			squashed_strides_src_[i] = static_cast<uint32_t>(numels);
 			numels *= squashed_dims[i];
 		}
-		
+
 
 		for (i = 0; i < naxes; i++)
 		{
@@ -1279,7 +1758,7 @@ struct OffsetCalc_permutaion
 					}
 				}
 			}
-		
+
 		}
 
 		ndims_ = ndims;

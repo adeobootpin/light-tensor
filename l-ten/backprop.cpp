@@ -181,7 +181,7 @@ namespace lten {
 	}
 #else
 	template<typename Dtype>
-	void TensorImpl<Dtype>::do_backward(MultiDimArray<Dtype>* top_gradient_ptr)
+	void TensorImpl<Dtype>::do_backward(MultiDimArray<Dtype>* top_gradient_ptr, bool free_top_gradient)
 	{
 		int ret;
 		int i;
@@ -197,8 +197,8 @@ namespace lten {
 		// or tensors appearing multiple times on the computational graph
 		// (such tensors need to accumulate gradients and then backprop only once, preventing exponential growth of backward call tree)
 		if (accumulate_gradients_ || auto_accumulate_gradients_)
-		//if ((!num_children_ && autograd_on_) || auto_accumulate_gradients_)
-		//if ((!num_children_) || auto_accumulate_gradients_)
+			//if ((!num_children_ && autograd_on_) || auto_accumulate_gradients_)
+			//if ((!num_children_) || auto_accumulate_gradients_)
 		{
 			if (!gradient_ptr_)
 			{
@@ -314,30 +314,31 @@ namespace lten {
 			{
 				child_ptr = children_[i];
 
-				if (CPU == get_device())
+				if (grad_fn_)
 				{
-					bottom_gradient = &bottom_gradient_cpu;
-					bottom_gradient->Allocate(child_ptr->get_sizes(), child_ptr->get_ndims());
-				}
-				else
-				{
-					if (GPU == get_device())
+					if (CPU == get_device())
 					{
-#ifdef USE_CUDA
-						bottom_gradient = &bottom_gradient_gpu;
+						bottom_gradient = &bottom_gradient_cpu;
 						bottom_gradient->Allocate(child_ptr->get_sizes(), child_ptr->get_ndims());
-#else
-						LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
-#endif
 					}
 					else
 					{
-						LTEN_ERR("Invalid tensor device type");
+						if (GPU == get_device())
+						{
+#ifdef USE_CUDA
+							bottom_gradient = &bottom_gradient_gpu;
+							bottom_gradient->Allocate(child_ptr->get_sizes(), child_ptr->get_ndims());
+#else
+							LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
+#endif
+						}
+						else
+						{
+							LTEN_ERR("Invalid tensor device type");
+						}
 					}
-				}
 
-				if (grad_fn_)
-				{
+
 					if (gradient_ptr_)
 					{
 						(this->grad_fn_)(bottom_gradient, gradient_ptr_, children_, i, this);
@@ -346,10 +347,15 @@ namespace lten {
 					{
 						(this->grad_fn_)(bottom_gradient, top_gradient_ptr, children_, i, this);
 					}
+
+					if ((i == num_children_ - 1) && top_gradient_ptr && free_top_gradient)
+					{
+						top_gradient_ptr->ReleaseResources(); // free memory before descending into children or else memory allocations may fail unnecessarily (limiting model size)
+					}
 				}
 				else
 				{
-					if (!misc_tensor_) // "pointer" to a view
+					if (!data_ptr_tensor_) // "pointer" to a view's actual backing tensor
 					{
 						LTEN_ERR("No backpropagation function defined"); // only view tensors can have no backpropagaton function (since top_gradient pass-through can be used to speed things up)
 					}
@@ -362,13 +368,19 @@ namespace lten {
 					{
 						bottom_gradient = top_gradient_ptr;
 					}
+					assert(num_children_ == 1); // current code base assumes this a view (i.e. unary operator), if this changes, top_gradient_ptr a.k.a bottom_gradient may need to be retured back to original shape after processing current child, before processing next child
+					bottom_gradient->Reshape(children_[i]->get_sizes(), children_[i]->get_ndims());
 				}
-				children_[i]->do_backward(bottom_gradient);
+				children_[i]->do_backward(bottom_gradient, true);
 			}
 
 			if (auto_accumulate_gradients_)
 			{
-				//::FillBuffer<Dtype>(gradient_ptr_->GetDataPtr(), gradient_ptr_->GetNumels(), 0);
+				if (!accumulate_gradients_)
+				{
+					delete gradient_ptr_;
+					gradient_ptr_ = nullptr;
+				}
 				auto_accumulate_gradients_ = false;
 			}
 		}
@@ -403,9 +415,9 @@ namespace lten {
 	template void TensorImpl<int>::backward(MultiDimArray<int>* top_gradient_ptr);
 	template void TensorImpl<uint8_t>::backward(MultiDimArray<uint8_t>* top_gradient_ptr);
 
-	template void TensorImpl<float>::do_backward(MultiDimArray<float>* top_gradient_ptr);
-	template void TensorImpl<int>::do_backward(MultiDimArray<int>* top_gradient_ptr);
-	template void TensorImpl<uint8_t>::do_backward(MultiDimArray<uint8_t>* top_gradient_ptr);
+	template void TensorImpl<float>::do_backward(MultiDimArray<float>* top_gradient_ptr, bool free_top_gradient);
+	template void TensorImpl<int>::do_backward(MultiDimArray<int>* top_gradient_ptr, bool free_top_gradient);
+	template void TensorImpl<uint8_t>::do_backward(MultiDimArray<uint8_t>* top_gradient_ptr, bool free_top_gradient);
 
 } // namespace lten
 
@@ -417,13 +429,25 @@ void matmul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dt
 	MultiDimArray<Dtype>* operand2_md_array;
 	Dtype val;
 	uint64_t M, N, K;
+	float alpha;
+	float beta;
+	int lda;
+	int ldb;
+	int ldc;
+	int num_batches;
 	const uint64_t* dims_array = nullptr;
 	bool broadcast_required;
+	bool reduction_required;
 	uint64_t dims[MAX_DIMS];
+	uint64_t mat_mult_dims[MAX_DIMS];
+	uint64_t numels;
 	int i;
 	int ndims;
 	int device_index;
 	lten::device device_type;
+	cublasStatus_t status;
+	cublasHandle_t hCuBlas;
+	POINTER_ARRAYS* pointer_array = nullptr;
 	int original_ndims = 0;
 
 	device_type = parent_ptr->get_device();
@@ -434,18 +458,8 @@ void matmul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dt
 
 	ndims = parent_ptr->get_ndims();
 
-	if (ndims < 3)
-	{
-		original_ndims = ndims;
-		if (top_gradient_ptr)
-		{
-			top_gradient_ptr->Reshape(3);
-		}
-		bottom_gradient_ptr->Reshape(3);
-		operand1_md_array->Reshape(3);
-		operand2_md_array->Reshape(3);
-		ndims = 3;
-	}
+	alpha = 1.0f;
+	beta = 0.0f;
 
 	if (!top_gradient_ptr)
 	{
@@ -499,10 +513,24 @@ void matmul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dt
 
 	assert(ndims == operand1_md_array->GetNDims());
 
-	broadcast_required = top_gradient_ptr->check_broadcast_required(children_ptr_array[0]->get_sizes(), nullptr, true) || top_gradient_ptr->check_broadcast_required(children_ptr_array[1]->get_sizes(), nullptr, true);
 
 	if (lten::CPU == device_type)
 	{
+		if (ndims < 3)
+		{
+			original_ndims = ndims;
+			if (top_gradient_ptr)
+			{
+				top_gradient_ptr->Reshape(3);
+			}
+			bottom_gradient_ptr->Reshape(3);
+			operand1_md_array->Reshape(3);
+			operand2_md_array->Reshape(3);
+			ndims = 3;
+		}
+
+		broadcast_required = top_gradient_ptr->check_broadcast_required(children_ptr_array[0]->get_sizes(), nullptr, true) || top_gradient_ptr->check_broadcast_required(children_ptr_array[1]->get_sizes(), nullptr, true);
+
 		FillBuffer<Dtype>(bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), 0);
 
 		md_array_dim_iterator it(dims_array, ndims - 2);
@@ -533,12 +561,21 @@ void matmul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dt
 				cpu_gemm(true, false, M, N, K, static_cast<Dtype>(1), op1_data, top_data, static_cast<Dtype>(1), bottom_data);
 			}
 		}
+
+		if (original_ndims)
+		{
+			top_gradient_ptr->Reshape(original_ndims);
+			bottom_gradient_ptr->Reshape(original_ndims);
+			operand1_md_array->Reshape(original_ndims);
+			operand2_md_array->Reshape(original_ndims);
+		}
 	}
 	else
 	{
 		if (lten::GPU == device_type)
 		{
 #ifdef USE_CUDA
+			/*
 			cublasHandle_t hCuBlas;
 
 			hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(device_index);
@@ -593,6 +630,172 @@ void matmul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dt
 					LTEN_CUBLAS_CHECK(cublasSgemm(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_T, (int)N, (int)M, (int)K, &alpha, (float*)top_data, lda, (float*)op1_data, ldb, &beta, (float*)bottom_data, ldc));
 				}
 			}
+			*/
+			
+			// adapted from matmul in md_array_cuda.h
+			Dtype* result_data;
+			Dtype* lhs_data;
+			Dtype* rhs_data;
+			int stridea;
+			int strideb;
+			int stridec;
+			cublasOperation_t transa;
+			cublasOperation_t transb;
+
+
+			if (child_index == 0)
+			{
+				broadcast_required = check_broadcast_required(top_gradient_ptr->GetSizes(), children_ptr_array[1]->get_sizes(), top_gradient_ptr->GetNDims(), false, true, mat_mult_dims, true); // top_gradient * child_1_Transpose;
+
+				lhs_data = (Dtype*)children_ptr_array[1]->get_data_ptr();
+				rhs_data = top_gradient_ptr->GetDataPtr();
+
+				M = children_ptr_array[1]->get_sizes()[ndims - 2];
+				K = children_ptr_array[1]->get_sizes()[ndims - 1];
+				N = dims_array[ndims - 2];
+
+				lda = static_cast<int>(K);
+				ldb = static_cast<int>(K);
+				ldc = static_cast<int>(M);
+
+				transa = CUBLAS_OP_T;
+				transb = CUBLAS_OP_N;
+			}
+			else
+			{
+				broadcast_required = check_broadcast_required(children_ptr_array[0]->get_sizes(), top_gradient_ptr->GetSizes(), top_gradient_ptr->GetNDims(), true, false, mat_mult_dims, true); // child_0_Transpose * top_gradient
+
+				lhs_data = top_gradient_ptr->GetDataPtr();
+				rhs_data = (Dtype*)children_ptr_array[0]->get_data_ptr();
+
+				M = dims_array[ndims - 1];
+				K = children_ptr_array[0]->get_sizes()[ndims - 2];
+				N = children_ptr_array[0]->get_sizes()[ndims - 1];
+
+				lda = static_cast<int>(M);
+				ldb = static_cast<int>(N);
+				ldc = static_cast<int>(M);
+
+				transa = CUBLAS_OP_N;
+				transb = CUBLAS_OP_T;
+			}
+
+			numels = 1;
+			for (i = 0; i < ndims; i++)
+			{
+				numels *= mat_mult_dims[i];
+			}
+
+			if (bottom_gradient_ptr->GetNumels() < numels)
+			{
+				reduction_required = true;
+			}
+			else
+			{
+				reduction_required = false;
+			}
+
+
+			hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(device_index);
+			num_batches = top_gradient_ptr->GetNumels() / (dims_array[ndims - 1] * dims_array[ndims - 2]);
+
+			if (!broadcast_required)
+			{
+				if (reduction_required)
+				{
+					AllocateMemoryOnGPU((void**)&result_data, numels * sizeof(Dtype), false);
+				}
+				else
+				{
+					result_data = bottom_gradient_ptr->GetDataPtr();
+				}			
+
+				if (ndims < 3 || num_batches == 1)
+				{
+					status = cublasSgemm(hCuBlas, transa, transb, static_cast<int>(M), static_cast<int>(N), static_cast<int>(K), &alpha,
+						(float*)lhs_data, lda, (float*)rhs_data, ldb, &beta, (float*)result_data, ldc);
+				}
+				else
+				{
+					stridea = static_cast<int>(M * K);
+					strideb = static_cast<int>(K * N);
+					stridec = static_cast<int>(M * N);
+
+					status = cublasSgemmStridedBatched(hCuBlas, transa, transb, static_cast<int>(M), static_cast<int>(N), static_cast<int>(K), &alpha,
+						(float*)lhs_data, lda, stridea, (float*)rhs_data, ldb, strideb, &beta, (float*)result_data, ldc, stridec, num_batches);
+				}
+
+				if (reduction_required)
+				{
+					uint64_t mat_mult_strides[MAX_DIMS];
+					GetStrides(mat_mult_dims, mat_mult_strides, ndims);
+					OffsetCalc_reverse_broadcast offs(ndims, bottom_gradient_ptr->GetSizes(), bottom_gradient_ptr->GetSizes(), mat_mult_dims, bottom_gradient_ptr->GetStrides(), bottom_gradient_ptr->GetStrides(), mat_mult_strides);
+					gpu_reduce(bottom_gradient_ptr->GetNumels(), numels, &offs, bottom_gradient_ptr->GetDataPtr(), result_data);
+					FreeMemoryOnGPU(result_data);
+				}				
+			}
+			else
+			{
+				if (!pointer_array)
+				{
+					if (reduction_required)
+					{
+						LTEN_ERR("Debug: testing if execution gets here");
+					}
+
+					POINTER_ARRAYS pa_gpu;
+					POINTER_ARRAYS pa_cpu;
+
+					AllocateMemoryOnGPU(&pa_gpu.buffer, 3 * sizeof(float*) * num_batches, false);
+					pa_gpu.a_array = (void**)pa_gpu.buffer;
+					pa_gpu.b_array = (void**)pa_gpu.buffer + num_batches;
+					pa_gpu.c_array = (void**)pa_gpu.buffer + 2 * num_batches;
+
+					pa_cpu.buffer = new float*[3 * num_batches];
+					pa_cpu.a_array = (void**)pa_cpu.buffer;
+					pa_cpu.b_array = (void**)pa_cpu.buffer + num_batches;
+					pa_cpu.c_array = (void**)pa_cpu.buffer + 2 * num_batches;
+
+
+					int index = 0;
+					md_array_dim_iterator it(top_gradient_ptr->GetSizes(), ndims - 2);
+					for (auto higher_indices : it)
+					{
+						result_data = bottom_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
+						if (child_index == 0)
+						{
+							lhs_data = children_ptr_array[1]->get_mdarray()->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
+							rhs_data = top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
+						}
+						else
+						{
+							lhs_data = top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
+							rhs_data = children_ptr_array[0]->get_mdarray()->GetDataPtr(higher_indices, ndims - 2, broadcast_required);							
+						}		
+
+						pa_cpu.a_array[index] = (float*)lhs_data;
+						pa_cpu.b_array[index] = (float*)rhs_data;
+						pa_cpu.c_array[index] = (float*)result_data;
+						index++;
+					}
+
+					assert(index == num_batches);
+					CopyDataToGPU(pa_gpu.buffer, pa_cpu.buffer, 3 * sizeof(float*) * num_batches);
+
+					pointer_array = &pa_gpu;
+
+					status = cublasSgemmBatched(hCuBlas, transa, transb, static_cast<int>(M), static_cast<int>(N), static_cast<int>(K), &alpha,
+						(float**)pointer_array->a_array, lda, (float**)pointer_array->b_array, ldb, &beta, (float**)pointer_array->c_array, ldc, num_batches);
+
+					delete (float*)pa_cpu.buffer;
+					FreeMemoryOnGPU(pa_gpu.buffer);
+				}
+				else
+				{
+					status = cublasSgemmBatched(hCuBlas, transa, transb, static_cast<int>(M), static_cast<int>(N), static_cast<int>(K), &alpha,
+						(float**)pointer_array->a_array, lda, (float**)pointer_array->b_array, ldb, &beta, (float**)pointer_array->c_array, ldc, num_batches);
+				}
+			}			
 #else
 			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
 #endif
@@ -603,20 +806,14 @@ void matmul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dt
 		}
 	}
 
-	if (original_ndims)
-	{
-		top_gradient_ptr->Reshape(original_ndims);
-		bottom_gradient_ptr->Reshape(original_ndims);
-		operand1_md_array->Reshape(original_ndims);
-		operand2_md_array->Reshape(original_ndims);
-	}
-
 }
 
 
 template<typename Dtype>
 void add_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
+	MultiDimArray<Dtype>* operand1_md_array;
+	MultiDimArray<Dtype>* operand2_md_array;
 	uint64_t N;
 	const uint64_t* dims_array_top;
 	const uint64_t* dims_array_btm;
@@ -628,24 +825,28 @@ void add_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 	ndims = top_gradient_ptr->GetNDims();
 
 	assert(ndims == bottom_gradient_ptr->GetNDims());
-	if (ndims < 3)
-	{
-		original_ndims = ndims;
-		top_gradient_ptr->Reshape(3);
-		bottom_gradient_ptr->Reshape(3);
-		ndims = 3;
-	}
+
+	operand1_md_array = children_ptr_array[0]->get_mdarray();
+	operand2_md_array = children_ptr_array[1]->get_mdarray();
+
 
 	dims_array_top = top_gradient_ptr->GetSizes();
 	dims_array_btm = bottom_gradient_ptr->GetSizes();
-
-
-	broadcast_required = top_gradient_ptr->check_broadcast_required(bottom_gradient_ptr->GetSizes());
-
+	
 	device_type = parent_ptr->get_device();
 
 	if (device_type == lten::CPU)
 	{
+		if (ndims < 3)
+		{
+			original_ndims = ndims;
+			top_gradient_ptr->Reshape(3);
+			bottom_gradient_ptr->Reshape(3);
+			ndims = 3;
+		}
+
+		broadcast_required = top_gradient_ptr->check_broadcast_required(bottom_gradient_ptr->GetSizes());
+
 		FillBuffer<Dtype>(bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), 0);
 		if (dims_array_top[ndims - 1] == dims_array_btm[ndims - 1] && dims_array_top[ndims - 2] == dims_array_btm[ndims - 2]) // if same H x W then use faster path
 		{
@@ -669,20 +870,48 @@ void add_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 				(*bottom_gradient_ptr)(indices, ndims, broadcast_required) += (*top_gradient_ptr)(indices, ndims, broadcast_required);
 			}
 		}
+
+		if (original_ndims)
+		{
+			top_gradient_ptr->Reshape(original_ndims);
+			bottom_gradient_ptr->Reshape(original_ndims);
+		}
+
 	}
 	else
 	{
 		if (device_type == lten::GPU)
 		{
 #ifdef USE_CUDA
-			ZeroMemoryOnGPU(bottom_gradient_ptr->GetDataPtr(), sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
-			md_array_dim_iterator it(dims_array_top, ndims - 2);
-			for (auto higher_indices : it)
+			if (child_index == 0) // operand 1
 			{
-				float* bottom_data = (float*)bottom_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-				float* top_data = (float*)top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
+				broadcast_required = top_gradient_ptr->check_broadcast_required(children_ptr_array[0]->get_sizes());
 
-				gpu_scalar_mul(1.0f, top_data, bottom_data, dims_array_top[ndims - 2], dims_array_top[ndims - 1], dims_array_btm[ndims - 2], dims_array_btm[ndims - 1]);
+				if (broadcast_required)
+				{
+					gpu_add_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), (Dtype*)children_ptr_array[1]->get_data_ptr(), bottom_gradient_ptr->GetNDims(),
+						children_ptr_array[0]->get_sizes(), children_ptr_array[1]->get_sizes(), top_gradient_ptr->GetSizes(),
+						children_ptr_array[0]->get_strides(), children_ptr_array[1]->get_strides(), top_gradient_ptr->GetStrides());
+				}
+				else
+				{
+					gpu_add_backward(bottom_gradient_ptr->GetNumels(), operand2_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr());
+				}
+
+				}
+			else
+			{
+				broadcast_required = top_gradient_ptr->check_broadcast_required(children_ptr_array[1]->get_sizes());
+				if (broadcast_required)
+				{
+					gpu_add_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), (Dtype*)children_ptr_array[0]->get_data_ptr(), bottom_gradient_ptr->GetNDims(),
+						children_ptr_array[1]->get_sizes(), children_ptr_array[0]->get_sizes(), top_gradient_ptr->GetSizes(),
+						children_ptr_array[1]->get_strides(), children_ptr_array[0]->get_strides(), top_gradient_ptr->GetStrides());
+				}
+				else
+				{
+					gpu_add_backward(bottom_gradient_ptr->GetNumels(), operand1_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr());
+				}
 			}
 #else
 			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
@@ -693,17 +922,13 @@ void add_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 			LTEN_ERR("Invalid tensor device type");
 		}
 	}
-
-	if (original_ndims)
-	{
-		top_gradient_ptr->Reshape(original_ndims);
-		bottom_gradient_ptr->Reshape(original_ndims);
-	}
 }
 
 template<typename Dtype>
 void sub_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
+	MultiDimArray<Dtype>* operand1_md_array;
+	MultiDimArray<Dtype>* operand2_md_array;
 	uint64_t N;
 	const uint64_t* dims_array_top;
 	const uint64_t* dims_array_btm;
@@ -715,13 +940,8 @@ void sub_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 	ndims = top_gradient_ptr->GetNDims();
 	assert(ndims == bottom_gradient_ptr->GetNDims());
 
-	if (ndims < 3)
-	{
-		original_ndims = ndims;
-		top_gradient_ptr->Reshape(3);
-		bottom_gradient_ptr->Reshape(3);
-		ndims = 3;
-	}
+	operand1_md_array = children_ptr_array[0]->get_mdarray();
+	operand2_md_array = children_ptr_array[1]->get_mdarray();
 
 	dims_array_top = top_gradient_ptr->GetSizes();
 	dims_array_btm = bottom_gradient_ptr->GetSizes();
@@ -733,6 +953,14 @@ void sub_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 
 	if (device_type == lten::CPU)
 	{
+		if (ndims < 3)
+		{
+			original_ndims = ndims;
+			top_gradient_ptr->Reshape(3);
+			bottom_gradient_ptr->Reshape(3);
+			ndims = 3;
+		}
+
 		FillBuffer<Dtype>(bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), 0);
 
 		if (dims_array_top[ndims - 1] == dims_array_btm[ndims - 1] && dims_array_top[ndims - 2] == dims_array_btm[ndims - 2]) // if same H x W then use faster path
@@ -772,32 +1000,48 @@ void sub_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 				}
 			}
 		}
+
+		if (original_ndims)
+		{
+			top_gradient_ptr->Reshape(original_ndims);
+			bottom_gradient_ptr->Reshape(original_ndims);
+		}
+
 	}
 	else
 	{
 		if (device_type == lten::GPU)
 		{
 #ifdef USE_CUDA
-			ZeroMemoryOnGPU(bottom_gradient_ptr->GetDataPtr(), sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
-			md_array_dim_iterator it(dims_array_top, ndims - 2);
-			for (auto higher_indices : it)
+			if (child_index == 0) // operand 1
 			{
-				float* bottom_data = (float*)bottom_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-				float* top_data = (float*)top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
+				broadcast_required = top_gradient_ptr->check_broadcast_required(children_ptr_array[0]->get_sizes());
 
-				if (child_index == 0) // operand 1
+				if (broadcast_required)
 				{
-					gpu_scalar_mul(1.0f, top_data, bottom_data,
-						dims_array_top[ndims - 2], dims_array_top[ndims - 1],
-						dims_array_btm[ndims - 2], dims_array_btm[ndims - 1]);
+					gpu_sub_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), (Dtype*)children_ptr_array[1]->get_data_ptr(), bottom_gradient_ptr->GetNDims(),
+						children_ptr_array[0]->get_sizes(), children_ptr_array[1]->get_sizes(), top_gradient_ptr->GetSizes(),
+						children_ptr_array[0]->get_strides(), children_ptr_array[1]->get_strides(), top_gradient_ptr->GetStrides(), static_cast<Dtype>(1));
 				}
 				else
 				{
-					gpu_scalar_mul(-1.0f, top_data, bottom_data,
-						dims_array_top[ndims - 2], dims_array_top[ndims - 1],
-						dims_array_btm[ndims - 2], dims_array_btm[ndims - 1]);
+					gpu_sub_backward(bottom_gradient_ptr->GetNumels(), operand2_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), static_cast<Dtype>(1));
 				}
 
+			}
+			else
+			{
+				broadcast_required = top_gradient_ptr->check_broadcast_required(children_ptr_array[1]->get_sizes());
+				if (broadcast_required)
+				{
+					gpu_sub_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), (Dtype*)children_ptr_array[0]->get_data_ptr(), bottom_gradient_ptr->GetNDims(),
+						children_ptr_array[1]->get_sizes(), children_ptr_array[0]->get_sizes(), top_gradient_ptr->GetSizes(),
+						children_ptr_array[1]->get_strides(), children_ptr_array[0]->get_strides(), top_gradient_ptr->GetStrides(), static_cast<Dtype>(-1));
+				}
+				else
+				{
+					gpu_sub_backward(bottom_gradient_ptr->GetNumels(), operand1_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), static_cast<Dtype>(-1));
+				}
 			}
 #else
 			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
@@ -807,14 +1051,8 @@ void sub_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 		{
 			LTEN_ERR("Invalid tensor device type");
 		}
-	}
 
-	if (original_ndims)
-	{
-		top_gradient_ptr->Reshape(original_ndims);
-		bottom_gradient_ptr->Reshape(original_ndims);
 	}
-
 
 }
 
@@ -837,24 +1075,25 @@ void mul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 	ndims = top_gradient_ptr->GetNDims();
 	assert(ndims == bottom_gradient_ptr->GetNDims());
 	assert(ndims == children_ptr_array[child_index]->get_ndims());
-	if (ndims < 3)
-	{
-		original_ndims = ndims;
-		top_gradient_ptr->Reshape(3);
-		bottom_gradient_ptr->Reshape(3);
-		operand1_md_array->Reshape(3);
-		operand2_md_array->Reshape(3);
-		ndims = 3;
-	}
 
 	dims_array_top = top_gradient_ptr->GetSizes();
-
-	broadcast_required = top_gradient_ptr->check_broadcast_required(children_ptr_array[0]->get_sizes()) || top_gradient_ptr->check_broadcast_required(children_ptr_array[1]->get_sizes());
 
 	device_type = parent_ptr->get_device();
 
 	if (device_type == lten::CPU)
 	{
+		if (ndims < 3)
+		{
+			original_ndims = ndims;
+			top_gradient_ptr->Reshape(3);
+			bottom_gradient_ptr->Reshape(3);
+			operand1_md_array->Reshape(3);
+			operand2_md_array->Reshape(3);
+			ndims = 3;
+		}
+
+		broadcast_required = top_gradient_ptr->check_broadcast_required(children_ptr_array[0]->get_sizes()) || top_gradient_ptr->check_broadcast_required(children_ptr_array[1]->get_sizes());
+
 		FillBuffer<Dtype>(bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), 0);
 
 		if (child_index == 0) // operand 1
@@ -914,76 +1153,46 @@ void mul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 				}
 			}
 		}
+
+		if (original_ndims)
+		{
+			top_gradient_ptr->Reshape(original_ndims);
+			bottom_gradient_ptr->Reshape(original_ndims);
+			operand1_md_array->Reshape(original_ndims);
+			operand2_md_array->Reshape(original_ndims);
+		}
 	}
 	else
 	{
 		if (device_type == lten::GPU)
 		{
 #ifdef USE_CUDA
+			broadcast_required = top_gradient_ptr->check_broadcast_required(children_ptr_array[0]->get_sizes()) || top_gradient_ptr->check_broadcast_required(children_ptr_array[1]->get_sizes());
 			if (child_index == 0) // operand 1
 			{
 				if (broadcast_required)
 				{
+					gpu_mul_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), (Dtype*)children_ptr_array[1]->get_data_ptr(), bottom_gradient_ptr->GetNDims(),
+						children_ptr_array[0]->get_sizes(), children_ptr_array[1]->get_sizes(), top_gradient_ptr->GetSizes(),
+						children_ptr_array[0]->get_strides(), children_ptr_array[1]->get_strides(), top_gradient_ptr->GetStrides());
 				}
 				else
 				{
 					gpu_mul_backward(bottom_gradient_ptr->GetNumels(), operand2_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr());
 				}
-
-				/*
-				const uint64_t* dims_array_btm;
-				dims_array_btm = bottom_gradient_ptr->GetSizes();
-
-				const uint64_t* dims_array_op2;
-				dims_array_op2 = operand2_md_array->GetSizes();
-
-				md_array_dim_iterator it(dims_array_top, ndims - 2);
-				for (auto higher_indices : it)
-				{
-					Dtype* op2_data = operand2_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* bottom_data = bottom_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* top_data = top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-
-					gpu_mul((float*)top_data, (float*)op2_data, (float*)bottom_data,
-						dims_array_top[ndims - 2], dims_array_top[ndims - 1],
-						dims_array_op2[ndims - 2], dims_array_op2[ndims - 1],
-						dims_array_btm[ndims - 2], dims_array_btm[ndims - 1]);
-				}
-				*/
 			}
 			else
 			{
 				if (broadcast_required)
 				{
+					gpu_mul_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), (Dtype*)children_ptr_array[0]->get_data_ptr(), bottom_gradient_ptr->GetNDims(),
+						children_ptr_array[1]->get_sizes(), children_ptr_array[0]->get_sizes(), top_gradient_ptr->GetSizes(),
+						children_ptr_array[1]->get_strides(), children_ptr_array[0]->get_strides(), top_gradient_ptr->GetStrides());
 				}
 				else
 				{
 					gpu_mul_backward(bottom_gradient_ptr->GetNumels(), operand1_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr());
 				}
-
-				/*
-				ZeroMemoryOnGPU(bottom_gradient_ptr->GetDataPtr(), sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
-				assert(child_index == 1);
-
-				const uint64_t* dims_array_btm;
-				dims_array_btm = bottom_gradient_ptr->GetSizes();
-
-				const uint64_t* dims_array_op1;
-				dims_array_op1 = operand1_md_array->GetSizes();
-
-				md_array_dim_iterator it(dims_array_top, ndims - 2);
-				for (auto higher_indices : it)
-				{
-					Dtype* op1_data = operand1_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* bottom_data = bottom_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* top_data = top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-
-					gpu_mul((float*)top_data, (float*)op1_data, (float*)bottom_data,
-						dims_array_top[ndims - 2], dims_array_top[ndims - 1],
-						dims_array_op1[ndims - 2], dims_array_op1[ndims - 1],
-						dims_array_btm[ndims - 2], dims_array_btm[ndims - 1]);
-				}
-				*/
 			}
 #else
 			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
@@ -993,15 +1202,6 @@ void mul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 		{
 			LTEN_ERR("Invalid tensor device type");
 		}
-	}
-
-
-	if (original_ndims)
-	{
-		top_gradient_ptr->Reshape(original_ndims);
-		bottom_gradient_ptr->Reshape(original_ndims);
-		operand1_md_array->Reshape(original_ndims);
-		operand2_md_array->Reshape(original_ndims);
 	}
 
 }
@@ -1026,16 +1226,6 @@ void div_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 	operand1_md_array = children_ptr_array[0]->get_mdarray();
 	operand2_md_array = children_ptr_array[1]->get_mdarray();
 
-	if (ndims < 3)
-	{
-		original_ndims = ndims;
-		top_gradient_ptr->Reshape(3);
-		bottom_gradient_ptr->Reshape(3);
-		operand1_md_array->Reshape(3);
-		operand2_md_array->Reshape(3);
-		ndims = 3;
-	}
-
 	dims_array_top = top_gradient_ptr->GetSizes();
 
 	broadcast_required = top_gradient_ptr->check_broadcast_required(children_ptr_array[0]->get_mdarray()->GetSizes()) || top_gradient_ptr->check_broadcast_required(children_ptr_array[1]->get_mdarray()->GetSizes());
@@ -1045,6 +1235,16 @@ void div_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 
 	if (lten::CPU == device_type)
 	{
+		if (ndims < 3)
+		{
+			original_ndims = ndims;
+			top_gradient_ptr->Reshape(3);
+			bottom_gradient_ptr->Reshape(3);
+			operand1_md_array->Reshape(3);
+			operand2_md_array->Reshape(3);
+			ndims = 3;
+		}
+
 		FillBuffer<Dtype>(bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), 0);
 
 		if (child_index == 0) // operand 1
@@ -1109,61 +1309,48 @@ void div_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 				}
 			}
 		}
+
+		if (original_ndims)
+		{
+			top_gradient_ptr->Reshape(original_ndims);
+			bottom_gradient_ptr->Reshape(original_ndims);
+			operand1_md_array->Reshape(original_ndims);
+			operand2_md_array->Reshape(original_ndims);
+		}
 	}
 	else
 	{
 		if (lten::GPU == device_type)
 		{
 #ifdef USE_CUDA
-			ZeroMemoryOnGPU(bottom_gradient_ptr->GetDataPtr(), sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
 			if (child_index == 0) // operand 1
 			{
-				const uint64_t* dims_array_btm;
-				dims_array_btm = bottom_gradient_ptr->GetSizes();
-
-				const uint64_t* dims_array_op2;
-				dims_array_op2 = operand2_md_array->GetSizes();
-
-				md_array_dim_iterator it(dims_array_top, ndims - 2);
-				for (auto higher_indices : it)
+				if (broadcast_required)
 				{
-					Dtype* op2_data = operand2_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* bottom_data = bottom_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* top_data = top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-
-					gpu_div((float*)top_data, (float*)op2_data, (float*)bottom_data,
-						dims_array_top[ndims - 2], dims_array_top[ndims - 1],
-						dims_array_op2[ndims - 2], dims_array_op2[ndims - 1],
-						dims_array_btm[ndims - 2], dims_array_btm[ndims - 1]);
+					gpu_div_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), operand1_md_array->GetDataPtr(), operand2_md_array->GetDataPtr(), bottom_gradient_ptr->GetNDims(),
+						children_ptr_array[0]->get_sizes(), children_ptr_array[1]->get_sizes(), top_gradient_ptr->GetSizes(),
+						children_ptr_array[0]->get_strides(), children_ptr_array[1]->get_strides(), top_gradient_ptr->GetStrides(), false);
+				}
+				else
+				{
+					gpu_div_backward(bottom_gradient_ptr->GetNumels(), operand1_md_array->GetDataPtr(), operand2_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), false);
 				}
 			}
 			else
 			{
-				const uint64_t* dims_array_btm;
-				dims_array_btm = bottom_gradient_ptr->GetSizes();
-
-				const uint64_t* dims_array_op1;
-				dims_array_op1 = operand1_md_array->GetSizes();
-
-				const uint64_t* dims_array_op2;
-				dims_array_op2 = operand2_md_array->GetSizes();
-
-				md_array_dim_iterator it(dims_array_top, ndims - 2);
-				for (auto higher_indices : it)
+				if (broadcast_required)
 				{
-					Dtype* op1_data = operand1_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* op2_data = operand2_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* bottom_data = bottom_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* top_data = top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
+					gpu_div_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), operand2_md_array->GetDataPtr(), operand1_md_array->GetDataPtr(), bottom_gradient_ptr->GetNDims(),
+						children_ptr_array[1]->get_sizes(), children_ptr_array[0]->get_sizes(), top_gradient_ptr->GetSizes(),
+						children_ptr_array[1]->get_strides(), children_ptr_array[0]->get_strides(), top_gradient_ptr->GetStrides(), true);
 
-					//gpu_div_back(N, top_data, op1_data, op2_data, bottom_data);
-					gpu_div_back((float*)top_data, (float*)op1_data, (float*)op2_data, (float*)bottom_data,
-						dims_array_top[ndims - 2], dims_array_top[ndims - 1],
-						dims_array_op1[ndims - 2], dims_array_op1[ndims - 1],
-						dims_array_op2[ndims - 2], dims_array_op2[ndims - 1],
-						dims_array_btm[ndims - 2], dims_array_btm[ndims - 1]);
+				}
+				else
+				{
+					gpu_div_backward(bottom_gradient_ptr->GetNumels(), operand1_md_array->GetDataPtr(), operand2_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), true);
 				}
 			}
+
 #else
 			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
 #endif
@@ -1172,14 +1359,6 @@ void div_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 		{
 			LTEN_ERR("Invalid tensor device type");
 		}
-	}
-
-	if (original_ndims)
-	{
-		top_gradient_ptr->Reshape(original_ndims);
-		bottom_gradient_ptr->Reshape(original_ndims);
-		operand1_md_array->Reshape(original_ndims);
-		operand2_md_array->Reshape(original_ndims);
 	}
 }
 
@@ -1508,11 +1687,19 @@ void sum_backward1(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtyp
 
 }
 
+
 template<typename Dtype>
 void mean_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
 	int naxes;
 	lten::device device_type;
+	uint32_t* axes;
+	Dtype scale;
+	int i;
+	const uint64_t* dims;
+	int ndims;
+	uint64_t top_dims[MAX_DIMS];
+	uint64_t top_strides[MAX_DIMS];
 
 	naxes = static_cast<int>(parent_ptr->misc1_);
 
@@ -1520,14 +1707,62 @@ void mean_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtyp
 
 	if (lten::CPU == device_type)
 	{
-		LTEN_ERR("Not yet implemented: mean_backward CPU");
+		if (naxes)
+		{
+			axes = static_cast<uint32_t*>(parent_ptr->misc_cpu_ptr_);
+			
+			ndims = bottom_gradient_ptr->GetNDims();
+
+
+
+			UnsqueezeDims(top_gradient_ptr->GetSizes(), top_gradient_ptr->GetNDims(), axes, naxes, top_dims);
+			GetStrides(top_dims, top_strides, ndims);
+			OffsetCalc_broadcast offs(ndims, top_dims, bottom_gradient_ptr->GetSizes(), top_strides, bottom_gradient_ptr->GetStrides());
+
+			dims = bottom_gradient_ptr->GetSizes();
+			scale = static_cast<Dtype>(1);
+			for (i = 0; i < naxes; i++)
+			{
+				scale *= dims[axes[i]];
+			}
+			scale = static_cast<Dtype>(1) / scale;
+
+			cpu_mean_backward(bottom_gradient_ptr->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), &offs, scale);
+		}
+		else
+		{
+			LTEN_ERR("Not yet implemented");
+		}
 	}
 	else
 	{
 		if (lten::GPU == device_type)
 		{
 #ifdef USE_CUDA
-			gpu_mean_backward(bottom_gradient_ptr->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels());
+			if (naxes)
+			{
+				axes = static_cast<uint32_t*>(parent_ptr->misc_cpu_ptr_);
+
+				ndims = bottom_gradient_ptr->GetNDims();
+
+				UnsqueezeDims(top_gradient_ptr->GetSizes(), top_gradient_ptr->GetNDims(), axes, naxes, top_dims);
+				GetStrides(top_dims, top_strides, ndims);
+				OffsetCalc_broadcast offs(ndims, top_dims, bottom_gradient_ptr->GetSizes(), top_strides, bottom_gradient_ptr->GetStrides());
+
+				dims = bottom_gradient_ptr->GetSizes();
+				scale = static_cast<Dtype>(1);
+				for (i = 0; i < naxes; i++)
+				{
+					scale *= dims[axes[i]];
+				}
+				scale = static_cast<Dtype>(1) / scale;
+
+				gpu_mean_backward(bottom_gradient_ptr->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), &offs, scale);
+			}
+			else
+			{
+				gpu_mean_backward(bottom_gradient_ptr->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels());
+			}	
 #else
 			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
 #endif
@@ -1537,66 +1772,6 @@ void mean_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtyp
 			LTEN_ERR("Invalid tensor device type");
 		}
 	}
-
-
-	/*
-	int dim;
-	//uint64_t n, c, h, w;
-	//uint64_t N, C, H, W;
-	const uint64_t* dst_sizes;
-	const uint64_t* dst_strides;
-	uint64_t dim_size;
-	uint64_t ratio;
-	lten::device device_type;
-	int ndims;
-
-	device_type = parent_ptr->get_device();
-
-	ndims = parent_ptr->get_ndims();
-
-	dim = static_cast<int>(parent_ptr->misc1_);
-
-	dst_sizes = bottom_gradient_ptr->GetSizes();
-	dst_strides = bottom_gradient_ptr->GetStrides();
-
-	top_gradient_ptr->Reshape(ndims - 1);
-
-	dim_size = dst_sizes[dim];
-
-	if (dim > 0)
-	{
-		ratio = dst_strides[dim - 1] / dst_strides[dim];
-	}
-	else
-	{
-		ratio = 1;
-	}
-
-	if (lten::CPU == device_type)
-	{
-		FillBuffer<Dtype>(bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), 0);
-		cpu_mean_backward(bottom_gradient_ptr->GetDataPtr(), top_gradient_ptr->GetDataPtr(), top_gradient_ptr->GetNumels(), ratio, dim_size, dst_strides[dim]);
-	}
-	else
-	{
-		if (lten::GPU == device_type)
-		{
-#ifdef USE_CUDA
-			ZeroMemoryOnGPU(bottom_gradient_ptr->GetDataPtr(), sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
-			gpu_mean_backward(bottom_gradient_ptr->GetDataPtr(), top_gradient_ptr->GetDataPtr(), top_gradient_ptr->GetNumels(), ratio, dim_size, dst_strides[dim]);
-#else
-			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
-#endif
-		}
-		else
-		{
-			LTEN_ERR("Invalid tensor device type");
-		}
-	}
-
-
-	top_gradient_ptr->Reshape(ndims);
-	*/
 
 }
 
@@ -1857,13 +2032,24 @@ void scalar_mul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArra
 	else
 	{
 		assert(bottom_gradient_ptr->GetNumels() == top_gradient_ptr->GetNumels());
-		dims_array = top_gradient_ptr->GetSizes();
-
-		N = dims_array[ndims - 2] * dims_array[ndims - 1];
-		md_array_dim_iterator it(dims_array, ndims - 2);
 
 		if (device_type == lten::CPU)
 		{
+			int original_ndims = 0;
+
+			if (ndims < 2)
+			{
+				original_ndims = ndims;
+				top_gradient_ptr->Reshape(2);
+				bottom_gradient_ptr->Reshape(2);
+				ndims = 2;
+			}
+	
+			dims_array = top_gradient_ptr->GetSizes();
+			N = dims_array[ndims - 2] * dims_array[ndims - 1];
+			md_array_dim_iterator it(dims_array, ndims - 2);
+
+			//LTEN_ERR("Scalar mult backward not yet implemented for CPU");
 			FillBuffer<Dtype>(bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), 0);
 
 			for (auto higher_indices : it)
@@ -1873,21 +2059,19 @@ void scalar_mul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArra
 
 				cpu_axpy(N, scale, top_data, bottom_data, bottom_data);
 			}
+
+			if (original_ndims)
+			{
+				top_gradient_ptr->Reshape(original_ndims);
+				bottom_gradient_ptr->Reshape(original_ndims);
+			}
 		}
 		else
 		{
 			if (device_type == lten::GPU)
 			{
 #ifdef USE_CUDA
-				ZeroMemoryOnGPU(bottom_gradient_ptr->GetDataPtr(), sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
-
-				for (auto higher_indices : it)
-				{
-					Dtype* bottom_data = bottom_gradient_ptr->GetDataPtr(higher_indices, ndims - 2);
-					Dtype* top_data = top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2);
-
-					gpu_axpy(N, scale, top_data, bottom_data, bottom_data);
-				}
+				gpu_scalar_mul(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), static_cast<Dtype>(scale), bottom_gradient_ptr->GetNumels());
 #else
 				LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
 #endif
@@ -4398,10 +4582,6 @@ void layernorm_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray
 	int ndims;
 	lten::device device_type;
 	const uint64_t* dims_array_top;
-	lten::Tensor ln_grad;
-	lten::Tensor sd_grad;
-	lten::Tensor temp1_grad;
-	lten::Tensor mu_grad;
 	lten::TensorOps options;
 
 	layer_norm = static_cast<lten::LayerNorm*>(parent_ptr->misc_ptr1_);
@@ -4419,544 +4599,45 @@ void layernorm_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray
 	options.device_type = children_ptr_array[0]->get_device();
 	options.device_index = children_ptr_array[0]->get_device_index();
 
-
-	ln_grad = lten::AllocateTensor(dims_array_top, ndims, &options);
-
-	if (device_type == lten::CPU)
-	{
-
-	}
-	else
-	{
-		if (lten::GPU == device_type)
-		{
-#ifdef USE_CUDA
-			gpu_layer_norm_backwards((void*)layer_norm, (Dtype*)children_ptr_array[0]->get_data_ptr(), (Dtype*)top_gradient_ptr->GetDataPtr(), (Dtype*)bottom_gradient_ptr->GetDataPtr());
-
-#else
-			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
-#endif
-		}
-		else
-		{
-			LTEN_ERR("Invalid tesor data type");
-		}
-	}
-
-}
-
-
-template<typename Dtype>
-void layernorm_backwardxx(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
-{
-	uint64_t N;
-	lten::LayerNorm* layer_norm;
-	int ndims;
-	bool broadcast_required;
-	lten::device device_type;
-	const uint64_t* dims_array_top;
-	const uint64_t* dims_array_wt;
-	const uint64_t* dims_array_bias;
-	const uint64_t* dims_array_btm;
-	const uint64_t* dims_array_op1;
-	MultiDimArray<Dtype>* operand1_md_array;
-	MultiDimArray<Dtype>* operand2_md_array;
-	lten::Tensor ln_grad;
-	lten::Tensor sd_grad;
-	lten::Tensor temp1_grad;
-	lten::Tensor mu_grad;
-	MultiDimArray<Dtype>* feeder_gradient_ptr;
-	int dim;
-	const uint64_t* dst_sizes;
-	const uint64_t* dst_strides;
-	uint64_t dim_size;
-	uint64_t ratio;
-	lten::TensorOps options;
-
-	layer_norm = static_cast<lten::LayerNorm*>(parent_ptr->misc_ptr1_);
-	assert(layer_norm);
-	assert(parent_ptr->get_ndims() > 1);
-
-	ndims = parent_ptr->get_ndims();
-
-	dims_array_top = top_gradient_ptr->GetSizes();
-
-	device_type = parent_ptr->get_device();
-
-
-	options.data_type = children_ptr_array[0]->get_data_type();
-	options.device_type = children_ptr_array[0]->get_device();
-	options.device_index = children_ptr_array[0]->get_device_index();
-
-
-	ln_grad = lten::AllocateTensor(dims_array_top, ndims, &options);
+	int ndmis_dst = bottom_gradient_ptr->GetNDims();
+	uint32_t axes[1] = { static_cast<uint32_t>(ndmis_dst - 1) }; // placeholder since only last-dim layernorm works for now
+	Dtype* feeder_gradient; // buffer for gradient flowing back from gamma if affine, ignored othersize (simply use top_gradient)
 
 	if (device_type == lten::CPU)
 	{
 		if (layer_norm->is_affine())
 		{
-			//
-			// weight
-			//
-			broadcast_required = top_gradient_ptr->check_broadcast_required(layer_norm->get_weights()->get_sizes());
-			broadcast_required = true;
-
-			MultiDimArray<Dtype>* wt_gradient_ptr;
-			wt_gradient_ptr = layer_norm->get_weights()->get_gradients_mdarray<Dtype>();
-
-			operand1_md_array = layer_norm->get_ln()->get_mdarray<Dtype>();
-
-			if (dims_array_top[ndims - 1] == wt_gradient_ptr->GetSizes()[ndims - 1] &&
-				dims_array_top[ndims - 2] == wt_gradient_ptr->GetSizes()[ndims - 2] &&
-				dims_array_top[ndims - 1] == operand1_md_array->GetSizes()[ndims - 1] &&
-				dims_array_top[ndims - 2] == operand1_md_array->GetSizes()[ndims - 2]) // if same H x W then use faster path
-			{
-				N = dims_array_top[ndims - 2] * dims_array_top[ndims - 1];
-
-				md_array_dim_iterator it(dims_array_top, ndims - 2);
-				for (auto higher_indices : it)
-				{
-					Dtype* op1_data = operand1_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* wt_data = wt_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* top_data = top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-
-					cpu_mul(N, static_cast<Dtype>(1), top_data, op1_data, static_cast<Dtype>(1), wt_data);
-				}
-			}
-			else
-			{
-				md_array_dim_iterator it(dims_array_top, ndims);
-				for (auto indices : it)
-				{
-					(*wt_gradient_ptr)(indices, ndims, broadcast_required) += (*top_gradient_ptr)(indices, ndims) * (*operand1_md_array)(indices, ndims, broadcast_required);
-				}
-			}
-
-
-			//
-			// bias
-			//
-			broadcast_required = top_gradient_ptr->check_broadcast_required(layer_norm->get_bias()->get_sizes());
-			broadcast_required = true;
-
-			MultiDimArray<Dtype>* bias_gradient_ptr;
-			bias_gradient_ptr = layer_norm->get_bias()->get_gradients_mdarray<Dtype>();
-
-			dims_array_bias = bias_gradient_ptr->GetSizes();
-
-			if (dims_array_top[ndims - 1] == dims_array_bias[ndims - 1] && dims_array_top[ndims - 2] == dims_array_bias[ndims - 2]) // if same H x W then use faster path
-			{
-				N = dims_array_top[ndims - 2] * dims_array_top[ndims - 1];
-
-				md_array_dim_iterator it(dims_array_top, ndims - 2);
-				for (auto higher_indices : it)
-				{
-					Dtype* bias_data = bias_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* top_data = top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-
-					cpu_axpy(N, static_cast<Dtype>(1), top_data, bias_data, bias_data);
-				}
-			}
-			else
-			{
-				md_array_dim_iterator it(dims_array_top, ndims);
-
-				for (auto indices : it)
-				{
-					(*bias_gradient_ptr)(indices, ndims, broadcast_required) += (*top_gradient_ptr)(indices, ndims, broadcast_required);
-				}
-			}
-
-			//
-			// ln (op = * )
-			//
-			broadcast_required = top_gradient_ptr->check_broadcast_required(ln_grad.get_sizes());
-			broadcast_required = true;
-
-			MultiDimArray<Dtype>* ln_gradient_ptr;
-			ln_gradient_ptr = ln_grad.get_mdarray<Dtype>();
-
-			operand1_md_array = layer_norm->get_weights()->get_mdarray<Dtype>();
-
-			FillBuffer<Dtype>(ln_gradient_ptr->GetDataPtr(), ln_gradient_ptr->GetNumels(), 0);
-
-			if (dims_array_top[ndims - 1] == ln_gradient_ptr->GetSizes()[ndims - 1] &&
-				dims_array_top[ndims - 2] == ln_gradient_ptr->GetSizes()[ndims - 2] &&
-				dims_array_top[ndims - 1] == operand1_md_array->GetSizes()[ndims - 1] &&
-				dims_array_top[ndims - 2] == operand1_md_array->GetSizes()[ndims - 2]) // if same H x W then use faster path
-			{
-				N = dims_array_top[ndims - 2] * dims_array_top[ndims - 1];
-
-				md_array_dim_iterator it(dims_array_top, ndims - 2);
-				for (auto higher_indices : it)
-				{
-					Dtype* op1_data = operand1_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* ln_data = ln_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* top_data = top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-
-					cpu_mul(N, static_cast<Dtype>(1), top_data, op1_data, static_cast<Dtype>(1), ln_data);
-				}
-			}
-			else
-			{
-				md_array_dim_iterator it(dims_array_top, ndims);
-				for (auto indices : it)
-				{
-					(*ln_gradient_ptr)(indices, ndims, broadcast_required) += (*top_gradient_ptr)(indices, ndims) * (*operand1_md_array)(indices, ndims, broadcast_required);
-				}
-			}
-
+			feeder_gradient = new Dtype[sizeof(Dtype) * bottom_gradient_ptr->GetNumels()];
 		}
 		else
 		{
-			memcpy(ln_grad.get_data_ptr(), top_gradient_ptr->GetDataPtr(), sizeof(Dtype) * ln_grad.get_numels());
-		}
-		//std::cout << ln_grad << "\n";
-
-		//
-		// temp1 (op = div)
-		//
-		{
-			temp1_grad = lten::AllocateTensor(layer_norm->get_temp1()->get_sizes(), layer_norm->get_temp1()->get_ndims());
-			MultiDimArray<Dtype>* temp1_gradient_ptr;
-			temp1_gradient_ptr = temp1_grad.get_mdarray<Dtype>();
-			feeder_gradient_ptr = ln_grad.get_mdarray<Dtype>();
-			operand2_md_array = layer_norm->get_sd()->get_mdarray<Dtype>();
-
-			broadcast_required = true;
-
-			FillBuffer<Dtype>(temp1_gradient_ptr->GetDataPtr(), temp1_gradient_ptr->GetNumels(), 0);
-			md_array_dim_iterator it(ln_grad.get_sizes(), ln_grad.get_ndims());
-			for (auto indices : it)
-			{
-				(*temp1_gradient_ptr)(indices, ndims, broadcast_required) += (*feeder_gradient_ptr)(indices, ndims, broadcast_required) / (*operand2_md_array)(indices, ndims, broadcast_required);
-			}
-
-			//std::cout << temp1_grad << "\n";
+			feeder_gradient = nullptr;
 		}
 
-		//
-		// sd (op = div)
-		//
-		{
-			sd_grad = lten::AllocateTensor(layer_norm->get_sd()->get_sizes(), layer_norm->get_sd()->get_ndims());
-			MultiDimArray<Dtype>* sd_gradient_ptr;
-			sd_gradient_ptr = sd_grad.get_mdarray<Dtype>();
-			feeder_gradient_ptr = ln_grad.get_mdarray<Dtype>();
-			operand2_md_array = layer_norm->get_sd()->get_mdarray<Dtype>();
-			operand1_md_array = layer_norm->get_temp1()->get_mdarray<Dtype>();
+		cpu_layer_norm_backwards((void*)layer_norm, (Dtype*)children_ptr_array[0]->get_data_ptr(), (Dtype*)top_gradient_ptr->GetDataPtr(), (Dtype*)bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetSizes(), ndmis_dst, axes, 1, feeder_gradient);
 
-			broadcast_required = true;
+		delete feeder_gradient;
 
-			FillBuffer<Dtype>(sd_gradient_ptr->GetDataPtr(), sd_gradient_ptr->GetNumels(), 0);
-			md_array_dim_iterator it(ln_grad.get_sizes(), ln_grad.get_ndims());
-			for (auto indices : it)
-			{
-				(*sd_gradient_ptr)(indices, ndims, broadcast_required) += (*feeder_gradient_ptr)(indices, ndims, broadcast_required) * (static_cast<Dtype>(-1) * (*operand1_md_array)(indices, ndims, broadcast_required) / ((*operand2_md_array)(indices, ndims, broadcast_required) * (*operand2_md_array)(indices, ndims, broadcast_required)));
-			}
-
-			//std::cout << sd_grad << "\n";
-		}
-
-
-		//
-		// mu (op = -)
-		//
-		{
-			mu_grad = lten::AllocateTensor(layer_norm->get_mu()->get_sizes(), layer_norm->get_mu()->get_ndims());
-			MultiDimArray<Dtype>* mu_gradient_ptr;
-			mu_gradient_ptr = mu_grad.get_mdarray<Dtype>();
-			feeder_gradient_ptr = temp1_grad.get_mdarray<Dtype>();
-
-			broadcast_required = true;
-
-			FillBuffer<Dtype>(mu_gradient_ptr->GetDataPtr(), mu_gradient_ptr->GetNumels(), 0);
-			md_array_dim_iterator it(temp1_grad.get_sizes(), temp1_grad.get_ndims());
-			for (auto indices : it)
-			{
-				(*mu_gradient_ptr)(indices, ndims, broadcast_required) -= (*feeder_gradient_ptr)(indices, ndims, broadcast_required);
-			}
-
-			//std::cout << mu_grad << "\n";
-		}
-
-
-		//
-		// x (op = -, op = std, op = mean)
-		//
-		/*
-		{
-			feeder_gradient_ptr = temp1_grad.get_mdarray<Dtype>();
-
-			broadcast_required = true;
-
-			FillBuffer<Dtype>(bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), 0);
-			md_array_dim_iterator it(temp1_grad.get_sizes(), temp1_grad.get_ndims());
-			for (auto indices : it)
-			{
-				(*bottom_gradient_ptr)(indices, ndims, broadcast_required) += (*feeder_gradient_ptr)(indices, ndims, broadcast_required);
-			}
-			// same as a memcpy see below
-		}
-		*/
-		assert(bottom_gradient_ptr->GetNumels() == temp1_grad.get_numels());
-		memcpy(bottom_gradient_ptr->GetDataPtr(), temp1_grad.get_data_ptr(), sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
-
-
-		ndims = parent_ptr->get_ndims();
-		dim = ndims - 1;
-		assert(dim > 0);
-
-		dst_sizes = bottom_gradient_ptr->GetSizes();
-		dst_strides = bottom_gradient_ptr->GetStrides();
-
-		dim_size = dst_sizes[dim];
-
-		ratio = dst_strides[dim - 1] / dst_strides[dim];
-
-		cpu_std_backward(bottom_gradient_ptr->GetDataPtr(), static_cast<Dtype*>(sd_grad.get_data_ptr()), static_cast<Dtype*>(children_ptr_array[0]->get_data_ptr()), static_cast<Dtype*>(layer_norm->get_sd()->get_data_ptr()), sd_grad.get_numels(), ratio, dim_size, dst_strides[dim], false);
-
-		cpu_mean_backward(bottom_gradient_ptr->GetDataPtr(), static_cast<Dtype*>(mu_grad.get_data_ptr()), mu_grad.get_numels(), ratio, dim_size, dst_strides[dim]);
-
-
-		//std::cout << *bottom_gradient_ptr << "\n";
 	}
 	else
 	{
 		if (lten::GPU == device_type)
 		{
 #ifdef USE_CUDA
+
 			if (layer_norm->is_affine())
 			{
-				//
-				// weight
-				//
-				broadcast_required = top_gradient_ptr->check_broadcast_required(layer_norm->get_weights()->get_sizes());
-				broadcast_required = true;
-
-				MultiDimArray<Dtype>* wt_gradient_ptr;
-				wt_gradient_ptr = layer_norm->get_weights()->get_gradients_mdarray<Dtype>();
-
-				operand1_md_array = layer_norm->get_ln()->get_mdarray<Dtype>();
-
-				dims_array_wt = wt_gradient_ptr->GetSizes();
-
-				dims_array_btm = bottom_gradient_ptr->GetSizes();
-
-				dims_array_op1 = operand1_md_array->GetSizes();
-
-				N = dims_array_top[ndims - 2] * dims_array_top[ndims - 1];
-
-				md_array_dim_iterator it(dims_array_top, ndims - 2);
-				for (auto higher_indices : it)
-				{
-					Dtype* op1_data = operand1_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* wt_data = wt_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* top_data = top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-
-					gpu_mul((float*)top_data, (float*)op1_data, (float*)wt_data,
-						dims_array_top[ndims - 2], dims_array_top[ndims - 1],
-						dims_array_op1[ndims - 2], dims_array_op1[ndims - 1],
-						dims_array_wt[ndims - 2], dims_array_wt[ndims - 1]);
-				}
-
-
-				//
-				// bias
-				//
-				broadcast_required = top_gradient_ptr->check_broadcast_required(layer_norm->get_bias()->get_sizes());
-				broadcast_required = true;
-
-				MultiDimArray<Dtype>* bias_gradient_ptr;
-				bias_gradient_ptr = layer_norm->get_bias()->get_gradients_mdarray<Dtype>();
-
-				dims_array_bias = bias_gradient_ptr->GetSizes();
-
-				N = dims_array_top[ndims - 2] * dims_array_top[ndims - 1];
-
-				{
-					md_array_dim_iterator it(dims_array_top, ndims - 2);
-					for (auto higher_indices : it)
-					{
-						float* bias_data = (float*)bias_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-						float* top_data = (float*)top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-
-						gpu_scalar_mul(1.0f, top_data, bias_data, dims_array_top[ndims - 2], dims_array_top[ndims - 1], dims_array_bias[ndims - 2], dims_array_bias[ndims - 1]);
-					}
-
-				}
-
-
-				//
-				// ln (op = * )
-				//
-				broadcast_required = top_gradient_ptr->check_broadcast_required(ln_grad.get_sizes());
-				broadcast_required = true;
-
-				MultiDimArray<Dtype>* ln_gradient_ptr;
-				ln_gradient_ptr = ln_grad.get_mdarray<Dtype>();
-
-				operand1_md_array = layer_norm->get_weights()->get_mdarray<Dtype>();
-
-				dims_array_op1 = operand1_md_array->GetSizes();
-
-				ZeroMemoryOnGPU(ln_gradient_ptr->GetDataPtr(), sizeof(Dtype) * ln_gradient_ptr->GetNumels());
-
-				{
-					md_array_dim_iterator it(dims_array_top, ndims - 2);
-					for (auto higher_indices : it)
-					{
-						Dtype* op1_data = operand1_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-						Dtype* ln_data = ln_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-						Dtype* top_data = top_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-
-						gpu_mul((float*)top_data, (float*)op1_data, (float*)ln_data,
-							dims_array_top[ndims - 2], dims_array_top[ndims - 1],
-							dims_array_op1[ndims - 2], dims_array_op1[ndims - 1],
-							dims_array_top[ndims - 2], dims_array_top[ndims - 1]);
-					}
-
-				}
-
+				AllocateMemoryOnGPU((void**)&feeder_gradient, sizeof(float) * bottom_gradient_ptr->GetNumels(), false);
 			}
 			else
 			{
-				GPUToGPUCopy(ln_grad.get_data_ptr(), top_gradient_ptr->GetDataPtr(), sizeof(Dtype) * ln_grad.get_numels());
+				feeder_gradient = nullptr;
 			}
-			//
-			// temp1 (op = div)
-			//
-			{
-				temp1_grad = lten::AllocateTensor(layer_norm->get_temp1()->get_sizes(), layer_norm->get_temp1()->get_ndims(), &options);
-				MultiDimArray<Dtype>* temp1_gradient_ptr;
-				temp1_gradient_ptr = temp1_grad.get_mdarray<Dtype>();
-				feeder_gradient_ptr = ln_grad.get_mdarray<Dtype>();
-				operand2_md_array = layer_norm->get_sd()->get_mdarray<Dtype>();
+			
 
-				broadcast_required = true;
-
-				const uint64_t* dims_array_op2;
-				dims_array_op2 = operand2_md_array->GetSizes();
-
-				const uint64_t* dims_feeder;
-				dims_feeder = feeder_gradient_ptr->GetSizes();
-
-				ZeroMemoryOnGPU(temp1_gradient_ptr->GetDataPtr(), sizeof(Dtype) * temp1_gradient_ptr->GetNumels());
-				md_array_dim_iterator it(ln_grad.get_sizes(), ln_grad.get_ndims());
-				for (auto higher_indices : it)
-				{
-					Dtype* tmp1 = temp1_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* feeder = feeder_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* op2 = operand2_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-
-					gpu_div((float*)feeder, (float*)op2, (float*)tmp1, dims_feeder[ndims - 2], dims_feeder[ndims - 1], dims_array_op2[ndims - 2], dims_array_op2[ndims - 1]);
-				}
-
-				//temp1_grad = temp1_grad.to(lten::CPU);
-				//std::cout << temp1_grad << "\n";
-			}
-
-			//
-			// sd (op = div)
-			//
-			{
-				sd_grad = lten::AllocateTensor(layer_norm->get_sd()->get_sizes(), layer_norm->get_sd()->get_ndims(), &options);
-				MultiDimArray<Dtype>* sd_gradient_ptr;
-				sd_gradient_ptr = sd_grad.get_mdarray<Dtype>();
-				feeder_gradient_ptr = ln_grad.get_mdarray<Dtype>();
-				operand2_md_array = layer_norm->get_sd()->get_mdarray<Dtype>();
-				operand1_md_array = layer_norm->get_temp1()->get_mdarray<Dtype>();
-
-				broadcast_required = true;
-
-				ZeroMemoryOnGPU(sd_gradient_ptr->GetDataPtr(), sizeof(Dtype) * sd_gradient_ptr->GetNumels());
-
-				dims_array_op1 = operand1_md_array->GetSizes();
-
-				const uint64_t* dims_array_op2;
-				dims_array_op2 = operand2_md_array->GetSizes();
-
-				const uint64_t* dims_array_sd;
-				dims_array_sd = sd_gradient_ptr->GetSizes();
-
-				const uint64_t* dims_array_feeder;
-				dims_array_feeder = feeder_gradient_ptr->GetSizes();
-
-				md_array_dim_iterator it(dims_array_top, ndims - 2);
-				for (auto higher_indices : it)
-				{
-					Dtype* op1_data = operand1_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* op2_data = operand2_md_array->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* sd_data = sd_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					Dtype* feeder_data = feeder_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-
-					gpu_div_back((float*)feeder_data, (float*)op1_data, (float*)op2_data, (float*)sd_data,
-						dims_array_feeder[ndims - 2], dims_array_feeder[ndims - 1],
-						dims_array_op1[ndims - 2], dims_array_op1[ndims - 1],
-						dims_array_op2[ndims - 2], dims_array_op2[ndims - 1],
-						dims_array_sd[ndims - 2], dims_array_sd[ndims - 1]);
-				}
-
-
-				//sd_grad = sd_grad.to(lten::CPU);
-				//std::cout << sd_grad << "\n";
-			}
-
-			//
-			// mu (op = -)
-			//
-			{
-				mu_grad = lten::AllocateTensor(layer_norm->get_mu()->get_sizes(), layer_norm->get_mu()->get_ndims(), &options);
-				MultiDimArray<Dtype>* mu_gradient_ptr;
-				mu_gradient_ptr = mu_grad.get_mdarray<Dtype>();
-				feeder_gradient_ptr = temp1_grad.get_mdarray<Dtype>();
-
-				broadcast_required = true;
-
-
-				const uint64_t* dims_array_mu;
-				dims_array_mu = mu_gradient_ptr->GetSizes();
-
-				const uint64_t* dims_array_feeder;
-				dims_array_feeder = feeder_gradient_ptr->GetSizes();
-
-
-
-				ZeroMemoryOnGPU(mu_gradient_ptr->GetDataPtr(), sizeof(Dtype) * mu_gradient_ptr->GetNumels());
-				md_array_dim_iterator it(dims_array_top, ndims - 2);
-				for (auto higher_indices : it)
-				{
-					float* mu_data = (float*)mu_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-					float* feeder_data = (float*)feeder_gradient_ptr->GetDataPtr(higher_indices, ndims - 2, broadcast_required);
-
-					gpu_scalar_mul(-1.0f, feeder_data, mu_data,
-						dims_array_feeder[ndims - 2], dims_array_feeder[ndims - 1],
-						dims_array_mu[ndims - 2], dims_array_mu[ndims - 1]);
-
-				}
-
-				//mu_grad = mu_grad.to(lten::CPU);
-				//std::cout << mu_grad << "\n";
-			}
-
-			assert(bottom_gradient_ptr->GetNumels() == temp1_grad.get_numels());
-			GPUToGPUCopy(bottom_gradient_ptr->GetDataPtr(), temp1_grad.get_data_ptr(), sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
-
-
-			ndims = parent_ptr->get_ndims();
-			dim = ndims - 1;
-			assert(dim > 0);
-
-			dst_sizes = bottom_gradient_ptr->GetSizes();
-			dst_strides = bottom_gradient_ptr->GetStrides();
-
-			dim_size = dst_sizes[dim];
-
-			ratio = dst_strides[dim - 1] / dst_strides[dim];
-
-			gpu_std_backward(bottom_gradient_ptr->GetDataPtr(), static_cast<Dtype*>(sd_grad.get_data_ptr()), static_cast<Dtype*>(children_ptr_array[0]->get_data_ptr()), static_cast<Dtype*>(layer_norm->get_sd()->get_data_ptr()), sd_grad.get_numels(), ratio, dim_size, dst_strides[dim], false);
-
-			gpu_mean_backward(bottom_gradient_ptr->GetDataPtr(), static_cast<Dtype*>(mu_grad.get_data_ptr()), mu_grad.get_numels(), ratio, dim_size, dst_strides[dim]);
+			gpu_layer_norm_backwards((void*)layer_norm, (Dtype*)children_ptr_array[0]->get_data_ptr(), (Dtype*)top_gradient_ptr->GetDataPtr(), (Dtype*)bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetSizes(), ndmis_dst, axes, 1, feeder_gradient);
+			
+			FreeMemoryOnGPU(feeder_gradient);
 
 #else
 			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
@@ -4969,6 +4650,8 @@ void layernorm_backwardxx(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArr
 	}
 
 }
+
+
 
 template<typename Dtype>
 void masked_fill_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
@@ -5027,7 +4710,7 @@ The goal is to find all the locations where each brick is placed in the wall. Th
 each 'brick' is placed in several places (i.e. repeated) in the wall. Once these locations are found, the reduction
 can then proceed.
 
-Terminology: Coarse coordinates/offsets are with respect to the 'wall' where a unit is a brick with the shape of the 
+Terminology: Coarse coordinates/offsets are with respect to the 'wall' where a unit is a brick with the shape of the
 origianl tensor. Fine coordinates/offsets are with respect to the 'brick'. In other words, 'normal' 1-unit coordinates.
 
 See gpu_repeat_backward and OffsetCalc_repeat_backwards for implementation
@@ -5075,7 +4758,7 @@ void repeat_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dt
 
 	if (device_type == lten::CPU)
 	{
-	
+
 		for (int fine_index = 0; fine_index < numels_src; fine_index++)
 		{
 			val = 0;
@@ -5121,7 +4804,7 @@ void repeat_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dt
 			fine_index = fine_index % children_ptr_array[0]->get_strides()[i];
 		}
 
-		
+
 		for (int dst_index = 0; dst_index < numels_tg / numels_src; dst_index++)
 		{
 			coarse_index = dst_index;
@@ -5139,7 +4822,7 @@ void repeat_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dt
 		bottom_gradient_ptr->GetDataPtr()[src_index] = val;
 	}
 	*/
-	
+
 }
 
 
@@ -5157,14 +4840,14 @@ The uniformity of the repetitions makes it easier to share the workload between 
 Non uniform repetitions would make it difficult to balance threads and number of elements to sum before writing to memory.
 
 Assume bottom_graidient has shape {2, 8, 96}, repeats is 3136 and dim = 1, then top_gradient has shape { 2, 25088, 96 }
-What this means it that the destination can be viewed as 16 blocks of size 96. The source can be also be viewed as 16 'coarse' 
-blocks of size 96. However each of these coarse blocks has a row 3136 thick (instead of 1).  The task is therefore to 'reduce' 
+What this means it that the destination can be viewed as 16 blocks of size 96. The source can be also be viewed as 16 'coarse'
+blocks of size 96. However each of these coarse blocks has a row 3136 thick (instead of 1).  The task is therefore to 'reduce'
 the 16 'coarse' source blocks into the 16 'fine' target blocks.
 
 Each block is reduced by a group of warps, each warp handling alternating rows and 'reducing' from 'top' to 'bottom'. Intermediate
 sums are stored in local variables before writing to memory with atomics.
 
-Note there is a tweakable parameter; the number of warps per block. The smaller this number, the more sums are done in local 
+Note there is a tweakable parameter; the number of warps per block. The smaller this number, the more sums are done in local
 variables and hence the fewer atomics are required. However if the number is too small, a lot of cylcles as spent looping.
 
 See gpu_repeat_interleave_broadcast_backward for implementation
@@ -5204,7 +4887,7 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 	strides_src = top_gradient_ptr->GetStrides();
 	numels_src = top_gradient_ptr->GetNumels();
 	numels_dst = bottom_gradient_ptr->GetNumels();
-	
+
 	//OffsetCalc_repeat_interleave(const uint64_t* strides_dst, const uint64_t* strides_src, const uint32_t* cummulative_times, int ndims, int nrepeats, int dim)
 	OffsetCalc_repeat_interleave offs_calc(strides_src, bottom_gradient_ptr->GetStrides(), cummulative_times, bottom_gradient_ptr->GetNDims(), static_cast<int>(dims_src[dim]), dim);  // use dims_src[dim] here because nrepeats could be 1 (a.k.a boradcast mode) and the 'real' number of repreats is required for this call
 
@@ -5215,7 +4898,7 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 	if (device_type == lten::CPU)
 	{
 		memset(bottom_gradient_ptr->GetDataPtr(), 0, sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
-		
+
 		for (u64i = 0; u64i < numels_src; u64i++)
 		{
 			dst_offset = offs_calc.GetOffset(static_cast<uint32_t>(u64i));
@@ -5241,7 +4924,7 @@ void repeat_interleave_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, Multi
 			uint32_t repeat_dim_dim; // dimension of dimesion[dim]
 			uint32_t repeat;
 			uint32_t stride;
-	
+
 
 			repeat_dim_dim = static_cast<uint32_t>(dims_src[dim]);
 			repeat = cummulative_times[1]; // BUGBUG this will not work when repeat_dim_dim == 1!!!!
@@ -5311,7 +4994,7 @@ void index_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dty
 		}
 	}
 	else
-	{				
+	{
 		if (lten::GPU == device_type)
 		{
 #ifdef USE_CUDA
@@ -5488,6 +5171,9 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 		//
 		ndims = top_gradient_ptr->GetNDims();
 		scratch_c_buffer = pe->get_scratch_c_buffer(); // use scratch_c_buffer since same size as top gradient
+		assert(scratch_c_buffer == nullptr);
+		AllocateMemoryOnGPU(&scratch_c_buffer, sizeof(float) * top_gradient_ptr->GetNumels(), false); // allocate memory and keep it for use in child_index[1] because is will contain usefull data (free and set back to nullptr after child_index[1] backward processing)
+		pe->set_scratch_c_buffer(scratch_c_buffer); // save the allocated address so that same buffer can be used for child_index[1] backward processing
 		GetPermutationStridesAndeDims(top_gradient_ptr->GetSizes(), nullptr, dst_strides, tg_permutations, ndims);
 		gpu_permute((Dtype*)scratch_c_buffer, top_gradient_ptr->GetDataPtr(), ndims, top_gradient_ptr->GetNumels(), dst_strides, top_gradient_ptr->GetStrides(), tg_permutations);
 
@@ -5506,10 +5192,11 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 		stride_b = A_sizes[0] * A_sizes[1] * A_sizes[2] * B_sizes[0] * B_sizes[1];
 		stride_c = N * A_sizes[5];
 
-		scratch_a_buffer = pe->get_scratch_a_buffer(); // use scratch_a_buffer since same size as A gradient
+		AllocateMemoryOnGPU(&scratch_a_buffer, sizeof(float) * children_ptr_array[0]->get_numels(), false);
+
 		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, M, N, K, &alpha, (float*)children_ptr_array[1]->get_mdarray()->GetDataPtr(), lda, stride_a, (float*)scratch_c_buffer, ldb, stride_b, &beta, (float*)scratch_a_buffer, ldc, stride_c, B_sizes[0]);
 		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, 96, 896, 7, &alpha, (float*)children_ptr_array[1]->get_mdarray()->GetDataPtr(), 96, 7 * 96, (float*)scratch_c_buffer, 7, 6272, &beta, (float*)scratch_a_buffer, 96, 86016, 56);
-		
+
 
 
 		//
@@ -5518,6 +5205,7 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 		uint64_t src_strides[MAX_DIMS];
 		GetPermutationStridesAndeDims(children_ptr_array[0]->get_mdarray()->GetSizes(), nullptr, src_strides, tg_permutations, ndims);
 		gpu_permute(bottom_gradient_ptr->GetDataPtr(), (Dtype*)scratch_a_buffer, ndims, bottom_gradient_ptr->GetNumels(), bottom_gradient_ptr->GetStrides(), src_strides, bg_permutations);
+		FreeMemoryOnGPU(scratch_a_buffer);
 	}
 	else
 	{
@@ -5529,6 +5217,8 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 
 		void* permuted_a_buffer;
 
+		permuted_a_buffer = pe->get_permuted_a_buffer();
+
 		const uint64_t* A_sizes = children_ptr_array[0]->get_mdarray()->GetSizes();
 		const uint64_t* B_sizes = children_ptr_array[1]->get_mdarray()->GetSizes();
 		const uint64_t* C_sizes = top_gradient_ptr->GetSizes();
@@ -5536,7 +5226,7 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 
 		M = B_sizes[2];
 		N = B_sizes[1];
-		K = children_ptr_array[0]->get_mdarray()->GetNumels() / (A_sizes[4] * A_sizes[5]); 
+		K = children_ptr_array[0]->get_mdarray()->GetNumels() / (A_sizes[4] * A_sizes[5]);
 		lda = B_sizes[2];
 		ldb = B_sizes[1];
 		ldc = M;
@@ -5544,10 +5234,13 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 		stride_b = A_sizes[0] * A_sizes[1] * A_sizes[2] * B_sizes[0] * B_sizes[1];
 		stride_c = B_sizes[1] * B_sizes[2];
 
-		permuted_a_buffer = pe->get_permuted_a_buffer();
+		
 		scratch_c_buffer = pe->get_scratch_c_buffer(); // scratch_c_buffer should already have permuted top_gradient from A.backward
 		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_T, M, N, K, &alpha, (float*)permuted_a_buffer, lda, stride_a, (float*)scratch_c_buffer, ldb, stride_b, &beta, (float*)bottom_gradient_ptr->GetDataPtr(), ldc, stride_c, B_sizes[0]);
 		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_T, 96, 7, 896, &alpha, (float*)permuted_a_buffer, 96, 86016, (float*)scratch_c_buffer, 7, 6272, &beta, (float*)bottom_gradient_ptr->GetDataPtr(), 96, 672, 56);
+		//FreeMemoryOnGPU(permuted_a_buffer);
+		FreeMemoryOnGPU(scratch_c_buffer);
+		scratch_c_buffer = nullptr;
 	}
 
 }
@@ -5555,7 +5248,6 @@ void pseudo_einsum1_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 template<typename Dtype>
 void pseudo_einsum2_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
-	lten::Pseudo_Einsum_2* pe;
 	int device_index;
 	lten::device device_type;
 	void* scratch_buffer;
@@ -5563,35 +5255,58 @@ void pseudo_einsum2_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 	float alpha = 1.0f;
 	float beta = 0.0f;
 
+	int M, N, K;
+	int lda;
+	int ldb;
+	int ldc;
+	int stride_a;
+	int stride_b;
+	int stride_c;
+
 	cublasStatus_t status;
 	cublasHandle_t hCuBlas;
 
 	device_type = parent_ptr->get_device();
 	device_index = parent_ptr->get_device_index();
 
-	pe = static_cast<lten::Pseudo_Einsum_2*>(parent_ptr->misc_ptr1_);
-	scratch_buffer = pe->get_scratch_buffer();
-
-	hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(0);
-
 	if (lten::CPU == device_type)
 	{
 		LTEN_ERR("pseudo_einsum1_backward not implemented for CPU");
 	}
 
+	hCuBlas = lten::CUDA_globlas::singleton()->get_cublas_handle(0);
+
+	const uint64_t* A_sizes = children_ptr_array[0]->get_mdarray()->GetSizes();
+	const uint64_t* B_sizes = children_ptr_array[1]->get_mdarray()->GetSizes();
+	const uint64_t* C_sizes = top_gradient_ptr->GetSizes();
+
 	if (child_index == 0)
 	{
 		//------------------------------------------------------------------------------------------------------------------------------
+		M = B_sizes[2];
+		N = children_ptr_array[0]->get_mdarray()->GetNumels() / (A_sizes[4] * A_sizes[5]);
+		K = B_sizes[1];
+		lda = B_sizes[2];
+		ldb = C_sizes[4] * C_sizes[5];
+		ldc = M;
+		stride_a = B_sizes[1] * B_sizes[2];
+		stride_b = B_sizes[1];
+		stride_c = N * A_sizes[5];
 
-		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, 96, 896, 7, &alpha, (float*)A2.get_data_ptr(), 96, 7 * 96, (float*)TG2.get_data_ptr(), 7, 6272, &beta, (float*)G2.get_data_ptr(), 96, 86016, 56);
-		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, 96, 896, 7, &alpha, (float*)children_ptr_array[1]->get_data_ptr(), 96, 7 * 96, (float*)top_gradient_ptr->GetDataPtr(), 392, 7, &beta, (float*)scratch_buffer, 96, 86016, 56); // looks like some funky addressing of top gradient tensor here
-		
-		// output is { 56, 896, 96 }
-		uint64_t strides[MAX_DIMS] = { 96, 896 * 96, 1 }; // TODO: genrate this strange 'stride' array (see md_array_cuda.h)
-		uint64_t trasnposed_strides[MAX_DIMS] = { 5376, 96, 1}; //TODO: generate this dynamically
+		AllocateMemoryOnGPU(&scratch_buffer, sizeof(float) * children_ptr_array[0]->get_numels(), false);
 
+		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, 96, 896, 7, &alpha, (float*)children_ptr_array[1]->get_data_ptr(), 96, 7 * 96, (float*)top_gradient_ptr->GetDataPtr(), 392, 7, &beta, (float*)scratch_buffer, 96, 86016, 56); // looks like some funky addressing of top gradient tensor here
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_N, M, N, K, &alpha, (float*)children_ptr_array[1]->get_data_ptr(), lda, stride_a, (float*)top_gradient_ptr->GetDataPtr(), ldb, stride_b, &beta, (float*)scratch_buffer, ldc, stride_c, B_sizes[0]); // looks like some funky addressing of top gradient tensor here
+
+																																																																			   // output is { 56, 896, 96 }
+		//uint64_t strides[MAX_DIMS] = { 96, 896 * 96, 1 }; // TODO: generate this strange 'stride' array (see md_array_cuda.h)
+		//uint64_t trasnposed_strides[MAX_DIMS] = { 5376, 96, 1 }; //TODO: generate this dynamically
+
+		uint64_t strides[MAX_DIMS] = { B_sizes[2], children_ptr_array[0]->get_mdarray()->GetNumels() / (A_sizes[4]), 1 }; // strange 'stride' array (see md_array_cuda.h)
+		uint64_t trasnposed_strides[MAX_DIMS] = { A_sizes[5] * A_sizes[4], B_sizes[2], 1 };
 
 		gpu_transpose((Dtype*)scratch_buffer, bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), strides, trasnposed_strides, 3); // TODO: invstigate why transpose(0, 1) is faster than permute({ 1, 2, 3, 4, 0, 5 }) 
+		FreeMemoryOnGPU(scratch_buffer);
 	}
 	else
 	{
@@ -5601,15 +5316,32 @@ void pseudo_einsum2_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDim
 		// but implemented as top_gradient.permute(...).matmul(A) for speed
 		//--------------------------------------------------------------------------------
 
-		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_T, 7, 96, 896, &alpha, (float*)top_gradient_ptr->GetDataPtr(), 392, 7, (float*)children_ptr_array[0]->get_data_ptr(), 5376, 96,
-			&beta, (float*)scratch_buffer, 7, 672, 56);
-		
+		M = B_sizes[1];
+		N = B_sizes[2];
+		K = children_ptr_array[0]->get_mdarray()->GetNumels() / (A_sizes[4] * A_sizes[5]);
+		lda = C_sizes[4] * C_sizes[5];
+		ldb = A_sizes[5] * A_sizes[4];
+		ldc = M;
+		stride_a = B_sizes[1];
+		stride_b = B_sizes[2];
+		stride_c = B_sizes[1] * B_sizes[2];
+
+		AllocateMemoryOnGPU(&scratch_buffer, sizeof(float) * children_ptr_array[1]->get_numels(), false);
+
+		//status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_T, 7, 96, 896, &alpha, (float*)top_gradient_ptr->GetDataPtr(), 392, 7, (float*)children_ptr_array[0]->get_data_ptr(), 5376, 96, &beta, (float*)scratch_buffer, 7, 672, 56);
+		status = cublasSgemmStridedBatched(hCuBlas, CUBLAS_OP_N, CUBLAS_OP_T, M, N, K, &alpha, (float*)top_gradient_ptr->GetDataPtr(), lda, stride_a, (float*)children_ptr_array[0]->get_data_ptr(), ldb, stride_b, &beta, (float*)scratch_buffer, ldc, stride_c, B_sizes[0]);
+
 
 		// output is { 56, 96, 7 } i think
-		uint64_t strides[MAX_DIMS] = { 672, 1, 7 }; // TODO: genrate this strange 'stride' array (see md_array_cuda.h)
-		uint64_t trasnposed_strides[MAX_DIMS] = { 672, 96, 1 }; //TODO: generate this dynamically
+		//uint64_t strides[MAX_DIMS] = { 672, 1, 7 }; // TODO: generate this strange 'stride' array (see md_array_cuda.h)
+		//uint64_t trasnposed_strides[MAX_DIMS] = { 672, 96, 1 }; //TODO: generate this dynamically
 
+		uint64_t strides[MAX_DIMS] = { B_sizes[1] * B_sizes[2], 1, B_sizes[1] }; // strange 'stride' array (see md_array_cuda.h)
+		uint64_t trasnposed_strides[MAX_DIMS] = { B_sizes[1] * B_sizes[2], B_sizes[2], 1 }; //TODO: generate this dynamically
+
+	
 		gpu_transpose((Dtype*)scratch_buffer, bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNumels(), strides, trasnposed_strides, 3);
+		FreeMemoryOnGPU(scratch_buffer);
 	}
 }
 

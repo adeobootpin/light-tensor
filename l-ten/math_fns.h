@@ -1,6 +1,8 @@
 #ifndef MATH_FNS_H
 #define MATH_FNS_H
 
+#include "offset_calc.h"
+
 #ifdef USE_OPENBLAS
 extern "C" 
 {
@@ -77,12 +79,17 @@ void cpu_mean(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_
 template<typename Dtype>
 void cpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
 
-
 template<typename Dtype>
 void cpu_mean_backward(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
 
 template<typename Dtype>
-void cpu_var(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
+void cpu_mean_backward(Dtype* dst, const Dtype* src, const uint64_t numoutputs, OffsetCalc_broadcast* offs, Dtype scale);
+
+template<typename Dtype>
+void cpu_var(const Dtype* src, Dtype* dst, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode);
+
+template<typename Dtype>
+void cpu_var(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, bool unbiased);
 
 template<typename Dtype>
 void cpu_var_backward(Dtype* dst, const Dtype* src, const Dtype* op1, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride);
@@ -94,6 +101,9 @@ template<typename Dtype>
 void cpu_std_backward(Dtype* dst, const Dtype* src, const Dtype* op1, const Dtype* std, const uint64_t numels, const uint64_t ratio, const uint64_t dim_size, const uint64_t stride, bool sample_mode = true);
 
 template<typename Dtype>
+void cpu_layer_norm(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, Dtype* weight, Dtype* bias, Dtype* ln, Dtype* sd);
+
+template<typename Dtype>
 void cpu_dropout(Dtype* dst, Dtype* src, unsigned int* mask, unsigned int threshold, Dtype scale, uint64_t len);
 
 template<typename Dtype>
@@ -102,12 +112,16 @@ void cpu_sig_backward(Dtype* bottom, const Dtype* top, const Dtype* middle, cons
 template<typename Dtype>
 void cpu_tanh_backward(Dtype* bottom, const Dtype* top, const Dtype* middle, const uint64_t numels);
 
+template<typename Dtype>
+void cpu_layer_norm_backwards(void* vlayer_norm, Dtype* x, Dtype* top_gradient, Dtype* bottom_gradient, const uint64_t* dst_dims, uint32_t ndims, const uint32_t* axes, uint32_t naxes, Dtype* feeder_gradient);
+
 void cpu_transpose(float* src, float* dst, int dim_1, int dim_2,
 	int stride_src_dim_1, int stride_src_dim_1_minus_1, int stride_src_dim_2, int stride_src_dim_2_minus_1,
 	int stride_trn_dim_1, int stride_trn_dim_1_minus_1, int stride_trn_dim_2, int stride_trn_dim_2_minus_1, uint64_t numels);
 
 
 void quantized_matmul(bool traspose_A, bool traspose_B, uint64_t M, uint64_t N, uint64_t K, uint8_t alpha, uint8_t* A, uint8_t* B, uint8_t beta, uint8_t* C, QuantizationParams* qparms, int* bias, int* workspace); // workspace must be at least (M + N) * sizeof(int) bytes
+
 
 
 

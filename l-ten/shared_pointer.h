@@ -107,7 +107,7 @@ public:
 			assert(ref_count >= 0);
 			if (!ref_count)
 			{
-				real_object_->release_resources();
+				real_object_->release_all_resources();
 				delete real_object_;
 				real_object_ = nullptr;
 			}

@@ -20,6 +20,65 @@ const int CUDA_WARP_SIZE = 32;
 const int vec_size = 4;
 extern __shared__ float shared_mem_block[];
 
+//***********************************************************************************************************************************************
+const int defa_threads = 64;
+constexpr int num_threads = 64;
+constexpr int thread_work_size = 4;
+constexpr int block_work_size = 256;
+
+
+template<typename args_t>
+__device__ inline void unrolled_load(args_t *args, float* A, float* B, int idx, int remaining, OffsetCalc_broadcast* input_offset_calculator)
+{
+	int thread_idx = threadIdx.x;
+	uint32_t offset[2];
+
+#pragma unroll
+	for (int i = 0; i < thread_work_size; i++)
+	{
+		if (thread_idx >= remaining)
+		{
+			return;
+		}
+		int linear_idx = thread_idx + block_work_size * idx;
+
+		//input_offset_calculator->GetOffsets(linear_idx, &offset[0], &offset[1]);
+		input_offset_calculator->GetOffsets(linear_idx, offset);
+
+		std::get<0>(args[i]) = A[offset[0]];
+		std::get<1>(args[i]) = B[offset[1]];
+
+		thread_idx += num_threads;
+	}
+}
+
+
+__device__ inline void unrolled_save(float* C, float* results, int idx, int remaining)
+{
+	int thread_idx = threadIdx.x;
+
+#pragma unroll
+	for (int i = 0; i < thread_work_size; i++)
+	{
+		if (thread_idx >= remaining)
+		{
+			return;
+		}
+		int linear_idx = thread_idx + block_work_size * idx;
+
+		C[linear_idx] = results[i];
+
+		thread_idx += num_threads;
+	}
+
+}
+
+__device__ inline bool bounds_check(int index, int remaining)
+{
+	return ((threadIdx.x + index * num_threads) < remaining);
+}
+
+//***********************************************************************************************************************************************
 
 //-----------------------------------------------------------------------------------------------------
 //
@@ -55,7 +114,46 @@ void gpu_mul(uint64_t N, Dtype* A, Dtype* B, Dtype* C)
 	gpu_mul_kernel<Dtype> << <num_blocks, defa_threads >> > ((uint32_t)N, A, B, C);
 }
 
+__global__ void gpu_mul_kernel(float* A, float* B, float* C, int N, int ndims, OffsetCalc_broadcast offs_calc)
+{
+	int remaining = N - block_work_size * blockIdx.x;
+	int idx = blockIdx.x;
 
+	std::tuple<float, float> args[thread_work_size];
+	float results[thread_work_size];
+
+	unrolled_load(args, A, B, idx, remaining, &offs_calc);
+
+#pragma unroll
+	for (int i = 0; i < thread_work_size; i++)
+	{
+		if (bounds_check(i, remaining))
+		{
+			results[i] = std::get<0>(args[i]) * std::get<1>(args[i]);
+		}
+	}
+
+	unrolled_save(C, results, idx, remaining);
+}
+
+template<typename Dtype>
+void gpu_mul(Dtype* A, Dtype* B, Dtype* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims)
+{
+	OffsetCalc_broadcast off_calc(ndims, a_dims, b_dims, c_dims, a_strides, b_strides, c_strides);
+
+	dim3 dimGrid;
+	dim3 dimBlock;
+	int num_blocks;
+	uint64_t N;
+
+	N = numels;
+
+	assert(N < UINT_MAX); // offsets are 32 bit
+
+	num_blocks = (static_cast<int>(N) + 256 - 1) / 256;
+
+	gpu_mul_kernel << < num_blocks, defa_threads >> > ((float*)A, (float*)B, (float*)C, (int)N, ndims, off_calc);
+}
 
 
 template<typename Dtype>
@@ -89,65 +187,115 @@ void gpu_mul_backward(uint64_t N, Dtype* operand, Dtype* top_gradient, Dtype* bo
 }
 
 
-//***********************************************************************************************************************************************
-const int defa_threads = 64;
-constexpr int num_threads = 64;
-constexpr int thread_work_size = 4;
-constexpr int block_work_size = 256;
 
-
-template<typename args_t>
-__device__ inline void my_simple_load(args_t *args, float* A, float* B, int idx, int remaining, OffsetCalc_broadcast* input_offset_calculator)
+template<typename Dtype>
+__global__ void gpu_mul_backward_kernel(uint32_t numoutputs, Dtype* top_gradient, Dtype* bottom_gradient, Dtype* other_operand, OffsetCalc_reverse_broadcast offs_rev, uint32_t loop_count)
 {
-	int thread_idx = threadIdx.x;
-	uint32_t offset[2];
+	// one warp for each output
+	uint32_t warpId;
+	uint32_t laneId;
+	uint32_t i;
+	uint32_t other_operand_offset;
+	uint32_t tg_offset;
+	Dtype val;
 
-#pragma unroll
-	for (int i = 0; i < thread_work_size; i++)
+	warpId = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // absolute thread id /  warpSize
+	if (warpId >= numoutputs)
 	{
-		if (thread_idx >= remaining)
-		{
-			return;
-		}
-		int linear_idx = thread_idx + block_work_size * idx;
+		return;
+	}
 
-		//input_offset_calculator->GetOffsets(linear_idx, &offset[0], &offset[1]);
-		input_offset_calculator->GetOffsets(linear_idx, offset);
+	laneId = threadIdx.x % warpSize;
 
-		std::get<0>(args[i]) = A[offset[0]];
-		std::get<1>(args[i]) = B[offset[1]];
+	val = 0;
+	for (i = laneId; i < loop_count; i+= warpSize)
+	{
+		offs_rev.GetOffsets(warpId, i, &other_operand_offset, &tg_offset);
+		val += other_operand[other_operand_offset] * top_gradient[tg_offset];
+	}
 
-		thread_idx += num_threads;
+	//
+	// reduce
+	//
+	val += __shfl_down_sync(FULL_MASK, val, 16);
+	val += __shfl_down_sync(FULL_MASK, val, 8);
+	val += __shfl_down_sync(FULL_MASK, val, 4);
+	val += __shfl_down_sync(FULL_MASK, val, 2);
+	val += __shfl_down_sync(FULL_MASK, val, 1);
+
+	if (laneId == 0)
+	{
+		bottom_gradient[warpId] = val;
+	}
+	
+}
+
+template<typename Dtype>
+void gpu_mul_backward(Dtype* top_gradient, Dtype* bottom_gradient, Dtype* other_operand, const int ndims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides)
+{
+	// gpu_mul_backward w.r.t. operand 1
+	uint64_t numels_tg;
+	uint64_t numoutputs;
+	int i;
+	uint32_t warps_required;
+	uint32_t warps_per_block;
+	uint32_t num_blocks;
+	uint32_t loop_count;
+	OffsetCalc_reverse_broadcast offs_rev(ndims, op1_dims, op2_dims, tg_dims, op1_strides, op2_strides, tg_strides);
+
+	numels_tg = numoutputs = 1;
+	for (i = 0; i < ndims; i++)
+	{
+		numels_tg *= tg_dims[i];
+		numoutputs *= op1_dims[i];
+	}
+	
+	loop_count = numels_tg / numoutputs;
+	warps_required = static_cast<uint32_t>(numoutputs); // one warp for each output
+	warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
+	num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
+
+	gpu_mul_backward_kernel<Dtype> << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (numoutputs, top_gradient, bottom_gradient, other_operand, offs_rev, loop_count);
+}
+//-----------------------------------------------------------------------------------------------------
+
+
+
+//-----------------------------------------------------------------------------------------------------
+//
+// div functions
+//
+//-----------------------------------------------------------------------------------------------------
+template<typename Dtype>
+__global__ void gpu_div_kernel(uint32_t N, Dtype* A, Dtype* B, Dtype* C)
+{
+	uint32_t i;
+
+	i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < N)
+	{
+		C[i] = A[i] / B[i];
 	}
 }
 
-
-__device__ inline void my_simple_save(float* C, float* results, int idx, int remaining)
+template<typename Dtype>
+void gpu_div(uint64_t N, Dtype* A, Dtype* B, Dtype* C)
 {
-	int thread_idx = threadIdx.x;
+	dim3 dimGrid;
+	dim3 dimBlock;
+	int num_blocks;
 
-#pragma unroll
-	for (int i = 0; i < thread_work_size; i++)
-	{
-		if (thread_idx >= remaining)
-		{
-			return;
-		}
-		int linear_idx = thread_idx + block_work_size * idx;
+	int defa_threads = 64;
 
-		C[linear_idx] = results[i];
+	assert(N < UINT_MAX); // offsets are 32 bit
 
-		thread_idx += num_threads;
-	}
+	num_blocks = (static_cast<int>(N) + defa_threads - 1) / defa_threads;
 
+	gpu_div_kernel<Dtype> << <num_blocks, defa_threads >> > ((uint32_t)N, A, B, C);
 }
 
-__device__ inline bool bounds_check(int index, int remaining)
-{
-	return ((threadIdx.x + index * num_threads) < remaining);
-}
-
-__global__ void gpu_mul_kernel(float* A, float* B, float* C, int N, int ndims, OffsetCalc_broadcast offs_calc)
+__global__ void gpu_div_kernel(float* A, float* B, float* C, int N, int ndims, OffsetCalc_broadcast offs_calc)
 {
 	int remaining = N - block_work_size * blockIdx.x;
 	int idx = blockIdx.x;
@@ -155,23 +303,22 @@ __global__ void gpu_mul_kernel(float* A, float* B, float* C, int N, int ndims, O
 	std::tuple<float, float> args[thread_work_size];
 	float results[thread_work_size];
 
-	my_simple_load(args, A, B, idx, remaining, &offs_calc);
+	unrolled_load(args, A, B, idx, remaining, &offs_calc);
 
 #pragma unroll
 	for (int i = 0; i < thread_work_size; i++)
 	{
 		if (bounds_check(i, remaining))
 		{
-			results[i] = std::get<0>(args[i]) * std::get<1>(args[i]);
+			results[i] = std::get<0>(args[i]) / std::get<1>(args[i]);
 		}
 	}
 
-	my_simple_save(C, results, idx, remaining);
+	unrolled_save(C, results, idx, remaining);
 }
 
-//***********************************************************************************************************************************************
 template<typename Dtype>
-void gpu_mul(Dtype* A, Dtype* B, Dtype* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims)
+void gpu_div(Dtype* A, Dtype* B, Dtype* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims)
 {
 	OffsetCalc_broadcast off_calc(ndims, a_dims, b_dims, c_dims, a_strides, b_strides, c_strides);
 
@@ -186,7 +333,789 @@ void gpu_mul(Dtype* A, Dtype* B, Dtype* C, const uint64_t numels, const uint64_t
 
 	num_blocks = (static_cast<int>(N) + 256 - 1) / 256;
 
-	gpu_mul_kernel << < num_blocks, defa_threads >> > ((float*)A, (float*)B, (float*)C, (int)N, ndims, off_calc);
+	gpu_div_kernel << < num_blocks, defa_threads >> > ((float*)A, (float*)B, (float*)C, (int)N, ndims, off_calc);
+}
+
+template<typename Dtype>
+__global__ void gpu_div_backward_kernel(uint32_t N, Dtype* operand2, Dtype* top_gradient, Dtype* bottom_gradient)
+{
+	uint32_t i;
+
+	i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < N)
+	{
+		bottom_gradient[i] = top_gradient[i] / operand2[i];
+	}
+}
+
+template<typename Dtype>
+__global__ void gpu_div_backward_kernel(uint32_t N, Dtype* operand1, Dtype* operand2, Dtype* top_gradient, Dtype* bottom_gradient)
+{
+	uint32_t i;
+
+	i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < N)
+	{
+		bottom_gradient[i] = top_gradient[i] * (-operand1[i]) / (operand2[i] * operand2[i]);
+	}
+}
+
+
+template<typename Dtype>
+void gpu_div_backward(uint64_t N, Dtype* operand1, Dtype* operand2, Dtype* top_gradient, Dtype* bottom_gradient, bool divisor)
+{
+	dim3 dimGrid;
+	dim3 dimBlock;
+	int num_blocks;
+
+	int defa_threads = 64;
+
+	assert(N < UINT_MAX); // offsets are 32 bit
+
+	num_blocks = (static_cast<int>(N) + defa_threads - 1) / defa_threads;
+
+	if (divisor)
+	{
+		gpu_div_backward_kernel<Dtype> << <num_blocks, defa_threads >> > ((uint32_t)N, operand1, operand2, top_gradient, bottom_gradient);
+	}
+	else
+	{
+		gpu_div_backward_kernel<Dtype> << <num_blocks, defa_threads >> > ((uint32_t)N, operand2, top_gradient, bottom_gradient);
+	}	
+}
+
+
+
+
+template<typename Dtype>
+__global__ void gpu_div_backward_kernel(uint32_t numoutputs, Dtype* top_gradient, Dtype* bottom_gradient, Dtype* other_operand, OffsetCalc_reverse_broadcast offs_rev, uint32_t loop_count)
+{
+	// one warp for each output
+	uint32_t warpId;
+	uint32_t laneId;
+	uint32_t i;
+	uint32_t other_operand_offset;
+	uint32_t tg_offset;
+	Dtype val;
+
+	warpId = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // absolute thread id /  warpSize
+	if (warpId >= numoutputs)
+	{
+		return;
+	}
+	laneId = threadIdx.x % warpSize;
+
+	val = 0;
+	for (i = laneId; i < loop_count; i += warpSize)
+	{
+		offs_rev.GetOffsets(warpId, i, &other_operand_offset, &tg_offset);
+		val += top_gradient[tg_offset] / other_operand[other_operand_offset];
+	}
+
+	//
+	// reduce
+	//
+	val += __shfl_down_sync(FULL_MASK, val, 16);
+	val += __shfl_down_sync(FULL_MASK, val, 8);
+	val += __shfl_down_sync(FULL_MASK, val, 4);
+	val += __shfl_down_sync(FULL_MASK, val, 2);
+	val += __shfl_down_sync(FULL_MASK, val, 1);
+
+	if (laneId == 0)
+	{
+		bottom_gradient[warpId] = val;
+	}
+
+}
+
+template<typename Dtype>
+__global__ void gpu_div_backward_kernel(uint32_t numoutputs, Dtype* top_gradient, Dtype* bottom_gradient, Dtype* operand1, Dtype* operand2, OffsetCalc_reverse_broadcast offs_rev, uint32_t loop_count)
+{
+	// one warp for each output
+	uint32_t warpId;
+	uint32_t laneId;
+	uint32_t i;
+	uint32_t operand2_offset;
+	uint32_t tg_offset;
+	Dtype val;
+
+	warpId = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // absolute thread id /  warpSize
+	if (warpId >= numoutputs)
+	{
+		return;
+	}
+	laneId = threadIdx.x % warpSize;
+
+	val = 0;
+	for (i = laneId; i < loop_count; i += warpSize)
+	{
+		offs_rev.GetOffsets(warpId, i, &operand2_offset, &tg_offset);
+		val += top_gradient[tg_offset] * (-operand2[operand2_offset]) / (operand1[warpId] * operand1[warpId]);
+	}
+
+	//
+	// reduce
+	//
+	val += __shfl_down_sync(FULL_MASK, val, 16);
+	val += __shfl_down_sync(FULL_MASK, val, 8);
+	val += __shfl_down_sync(FULL_MASK, val, 4);
+	val += __shfl_down_sync(FULL_MASK, val, 2);
+	val += __shfl_down_sync(FULL_MASK, val, 1);
+
+	if (laneId == 0)
+	{
+		bottom_gradient[warpId] = val;
+	}
+
+}
+
+template<typename Dtype>
+void gpu_div_backward(Dtype* top_gradient, Dtype* bottom_gradient, Dtype* operand1, Dtype* operand2, const int ndims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides, bool divisor)
+{
+	// gpu_div_backward w.r.t. operand 1
+	uint64_t numels_tg;
+	uint64_t numoutputs;
+	int i;
+	uint32_t warps_required;
+	uint32_t warps_per_block;
+	uint32_t num_blocks;
+	uint32_t loop_count;
+	OffsetCalc_reverse_broadcast offs_rev(ndims, op1_dims, op2_dims, tg_dims, op1_strides, op2_strides, tg_strides);
+
+	numels_tg = numoutputs = 1;
+	for (i = 0; i < ndims; i++)
+	{
+		numels_tg *= tg_dims[i];
+		numoutputs *= op1_dims[i];
+	}
+
+	loop_count = numels_tg / numoutputs;
+	warps_required = static_cast<uint32_t>(numoutputs); // one warp for each output
+	warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
+	num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
+
+	if (divisor)
+	{
+		gpu_div_backward_kernel<Dtype> << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (numoutputs, top_gradient, bottom_gradient, operand1, operand2, offs_rev, loop_count);
+	}
+	else
+	{
+		gpu_div_backward_kernel<Dtype> << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (numoutputs, top_gradient, bottom_gradient, operand2, offs_rev, loop_count);
+	}
+	
+}
+//-----------------------------------------------------------------------------------------------------
+
+
+//-----------------------------------------------------------------------------------------------------
+//
+// add functions
+//
+//-----------------------------------------------------------------------------------------------------
+template<typename Dtype>
+__global__ void gpu_add_kernel(uint32_t N, Dtype* A, Dtype* B, Dtype* C)
+{
+	uint32_t i;
+
+	i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < N)
+	{
+		C[i] = A[i] + B[i];
+	}
+}
+
+template<typename Dtype>
+void gpu_add(uint64_t N, Dtype* A, Dtype* B, Dtype* C)
+{
+	dim3 dimGrid;
+	dim3 dimBlock;
+	int num_blocks;
+
+	int defa_threads = 64;
+
+	assert(N < UINT_MAX); // offsets are 32 bit
+
+	num_blocks = (static_cast<int>(N) + defa_threads - 1) / defa_threads;
+
+	gpu_add_kernel<Dtype> << <num_blocks, defa_threads >> > ((uint32_t)N, A, B, C);
+}
+
+
+template<typename Dtype>
+__global__ void gpu_add_backward_kernel(uint32_t N, Dtype* A, Dtype* B, Dtype* C)
+{
+	uint32_t i;
+
+	i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < N)
+	{
+		C[i] = B[i];
+	}
+}
+
+
+template<typename Dtype>
+void gpu_add_backward(uint64_t N, Dtype* operand, Dtype* top_gradient, Dtype* bottom_gradient)
+{
+	dim3 dimGrid;
+	dim3 dimBlock;
+	int num_blocks;
+
+	int defa_threads = 64;
+
+	assert(N < UINT_MAX); // offsets are 32 bit
+
+	num_blocks = (static_cast<int>(N) + defa_threads - 1) / defa_threads;
+
+	gpu_add_backward_kernel<Dtype> << <num_blocks, defa_threads >> > ((uint32_t)N, operand, top_gradient, bottom_gradient);
+}
+
+
+template<typename Dtype>
+__global__ void gpu_add_backward_kernel(uint32_t num_outputs, Dtype* top_gradient, Dtype* bottom_gradient, Dtype* other_operand, OffsetCalc_reverse_broadcast offs_rev, uint32_t loop_count)
+{
+	uint32_t warpIdx;
+	uint32_t laneId;
+	uint32_t i;
+	uint32_t j;
+	uint32_t tg_offset;
+	Dtype val;
+	uint32_t p_offset;
+
+	warpIdx = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // absolute thread id /  warpSize
+	if (warpIdx >= num_outputs)
+	{
+		return;
+	}
+
+	laneId = threadIdx.x % warpSize;
+
+	offs_rev.GetParialOffsets(warpIdx, nullptr, &p_offset);
+	val = 0;
+	i = laneId;
+
+	while (i < loop_count)
+	{
+#pragma unroll
+		for (j = 0; j < 4; j++)
+		{
+			if (i >= loop_count) break;
+
+			tg_offset = p_offset + offs_rev.GetBroadcastOffset(i);
+			val += top_gradient[tg_offset];
+			i += warpSize;
+		}
+	}
+
+	//
+	// reduce
+	//
+	val += __shfl_down_sync(FULL_MASK, val, 16);
+	val += __shfl_down_sync(FULL_MASK, val, 8);
+	val += __shfl_down_sync(FULL_MASK, val, 4);
+	val += __shfl_down_sync(FULL_MASK, val, 2);
+	val += __shfl_down_sync(FULL_MASK, val, 1);
+
+	if (laneId == 0)
+	{
+		bottom_gradient[warpIdx] = val;
+	}
+
+}
+
+
+// one thread per output but with 'clone' blocks to reduce the work load
+// good for large to small reductions, where thread count (i.e. number of outputs) is low and therefore work per thread is high
+template<typename Dtype>
+__global__ void gpu_add_backward_block_expanded_kernel(uint32_t num_outputs, Dtype* top_gradient, Dtype* bottom_gradient, Dtype* other_operand, OffsetCalc_reverse_broadcast offs_rev, uint32_t loop_count, uint32_t remaining)
+{
+	uint32_t threadId;
+	uint32_t i;
+	uint32_t j;
+	uint32_t index;
+	Dtype val[4];
+	uint32_t tg_offset[4];
+	uint32_t start;
+	uint32_t stop;
+	uint32_t p_offset;
+
+
+	threadId = ((blockIdx.x / 64) * blockDim.x) + threadIdx.x;
+	if (threadId >= num_outputs)
+	{
+		return;
+	}
+
+	start = loop_count * ((blockIdx.x) % 64);
+	stop = start + loop_count;
+
+	p_offset = offs_rev.GetParialOffsets(threadId, nullptr);
+
+	val[0] = 0;
+	val[1] = 0;
+	val[2] = 0;
+	val[3] = 0;
+
+	if (loop_count % 4)
+	{
+		for (i = start; i < stop; i += 4)
+		{
+#pragma unroll
+			for (j = 0; j < 4; j++)
+			{
+				if (i + j >= stop) break;
+				tg_offset[j] = p_offset + offs_rev.GetBroadcastOffset(i + j);
+			}
+
+#pragma unroll
+			for (j = 0; j < 4; j++)
+			{
+				if (i + j >= stop) break;
+				val[j] += top_gradient[tg_offset[j]];
+			}
+		}
+
+	}
+	else
+	{
+		// no checks to break out of loops
+		for (i = start; i < stop; i += 4)
+		{
+#pragma unroll
+			for (j = 0; j < 4; j++)
+			{
+				tg_offset[j] = p_offset + offs_rev.GetBroadcastOffset(i + j);
+			}
+
+#pragma unroll
+			for (j = 0; j < 4; j++)
+			{
+				val[j] += top_gradient[tg_offset[j]];
+			}
+		}
+
+	}
+
+
+	if (remaining)
+	{
+		start = loop_count * 64;
+		stop = start + remaining;
+		if ((blockIdx.x % 64) == 0)
+		{
+			i = start;
+			while (i < stop)
+			{
+#pragma unroll
+				for (j = 0; j < 4; j++)
+				{
+					if (i + j >= stop) break;
+					index = p_offset + offs_rev.GetBroadcastOffset(i + j);
+					val[0] += top_gradient[index];
+				}
+				i += 4;
+			}
+
+		}
+	}
+
+	Dtype valx = val[0] + val[1] + val[2] + val[3];
+
+	atomicAdd((float*)&bottom_gradient[threadId], valx);
+
+}
+
+template<typename Dtype>
+void gpu_add_backward(Dtype* top_gradient, Dtype* bottom_gradient, Dtype* other_operand, const int ndims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides)
+{
+	// gpu_add_backward w.r.t. operand 1
+	uint64_t numels_tg;
+	uint64_t num_outputs;
+	int i;
+	uint32_t warps_required;
+	uint32_t warps_per_block;
+	uint32_t num_blocks;
+	uint32_t loop_count;
+	OffsetCalc_reverse_broadcast offs_rev(ndims, op1_dims, op2_dims, tg_dims, op1_strides, op2_strides, tg_strides);
+
+	numels_tg = num_outputs = 1;
+	for (i = 0; i < ndims; i++)
+	{
+		numels_tg *= tg_dims[i];
+		num_outputs *= op1_dims[i];
+	}
+
+	loop_count = numels_tg / num_outputs;
+
+	if (loop_count < 4096)
+	{
+		warps_required = static_cast<uint32_t>(num_outputs); // one warp for each output
+		warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
+		num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
+
+		gpu_add_backward_kernel<Dtype> << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (num_outputs, top_gradient, bottom_gradient, other_operand, offs_rev, loop_count);
+	}
+	else
+	{
+		warps_required = static_cast<uint32_t>(num_outputs + 32 - 1) / 32; // one thread for each output
+		warps_per_block = min(4, warps_required);
+		num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
+
+		cudaMemsetAsync(bottom_gradient, 0, sizeof(Dtype) * num_outputs);
+		gpu_add_backward_block_expanded_kernel << <num_blocks * 64, warps_per_block * CUDA_WARP_SIZE >> > (num_outputs, top_gradient, bottom_gradient, other_operand, offs_rev, loop_count / 64, loop_count % 64);
+	}
+}
+
+
+
+__global__ void gpu_add_kernel(float* A, float* B, float* C, int N, int ndims, OffsetCalc_broadcast offs_calc)
+{
+	int remaining = N - block_work_size * blockIdx.x;
+	int idx = blockIdx.x;
+
+	std::tuple<float, float> args[thread_work_size];
+	float results[thread_work_size];
+
+	unrolled_load(args, A, B, idx, remaining, &offs_calc);
+
+#pragma unroll
+	for (int i = 0; i < thread_work_size; i++)
+	{
+		if (bounds_check(i, remaining))
+		{
+			results[i] = std::get<0>(args[i]) + std::get<1>(args[i]);
+		}
+	}
+
+	unrolled_save(C, results, idx, remaining);
+}
+
+template<typename Dtype>
+void gpu_add(Dtype* A, Dtype* B, Dtype* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims)
+{
+	OffsetCalc_broadcast off_calc(ndims, a_dims, b_dims, c_dims, a_strides, b_strides, c_strides);
+
+	dim3 dimGrid;
+	dim3 dimBlock;
+	int num_blocks;
+	uint64_t N;
+
+	N = numels;
+
+	assert(N < UINT_MAX); // offsets are 32 bit
+
+	num_blocks = (static_cast<int>(N) + 256 - 1) / 256;
+
+	gpu_add_kernel << < num_blocks, defa_threads >> > ((float*)A, (float*)B, (float*)C, (int)N, ndims, off_calc);
+}
+//-----------------------------------------------------------------------------------------------------
+
+
+//-----------------------------------------------------------------------------------------------------
+//
+// sub functions
+//
+//-----------------------------------------------------------------------------------------------------
+template<typename Dtype>
+__global__ void gpu_sub_kernel(uint32_t N, Dtype* A, Dtype* B, Dtype* C)
+{
+	uint32_t i;
+
+	i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < N)
+	{
+		C[i] = A[i] - B[i];
+	}
+}
+
+template<typename Dtype>
+void gpu_sub(uint64_t N, Dtype* A, Dtype* B, Dtype* C)
+{
+	dim3 dimGrid;
+	dim3 dimBlock;
+	int num_blocks;
+
+	int defa_threads = 64;
+
+	assert(N < UINT_MAX); // offsets are 32 bit
+
+	num_blocks = (static_cast<int>(N) + defa_threads - 1) / defa_threads;
+
+	gpu_sub_kernel<Dtype> << <num_blocks, defa_threads >> > ((uint32_t)N, A, B, C);
+}
+
+
+template<typename Dtype>
+__global__ void gpu_sub_backward_kernel(uint32_t N, Dtype* A, Dtype* B, Dtype* C, Dtype scale)
+{
+	uint32_t i;
+
+	i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < N)
+	{
+		C[i] = scale * B[i];
+	}
+}
+
+
+template<typename Dtype>
+void gpu_sub_backward(uint64_t N, Dtype* operand, Dtype* top_gradient, Dtype* bottom_gradient, Dtype scale)
+{
+	dim3 dimGrid;
+	dim3 dimBlock;
+	int num_blocks;
+
+	int defa_threads = 64;
+
+	assert(N < UINT_MAX); // offsets are 32 bit
+
+	num_blocks = (static_cast<int>(N) + defa_threads - 1) / defa_threads;
+
+	gpu_sub_backward_kernel<Dtype> << <num_blocks, defa_threads >> > ((uint32_t)N, operand, top_gradient, bottom_gradient, scale);
+}
+
+
+template<typename Dtype>
+__global__ void gpu_sub_backward_kernel(uint32_t num_outputs, Dtype* top_gradient, Dtype* bottom_gradient, OffsetCalc_reverse_broadcast offs_rev, uint32_t loop_count, Dtype scale)
+{
+	uint32_t warpIdx;
+	uint32_t laneId;
+	uint32_t i;
+	uint32_t j;
+	uint32_t tg_offset;
+	Dtype val;
+	uint32_t p_offset;
+
+	warpIdx = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // absolute thread id /  warpSize
+	if (warpIdx >= num_outputs)
+	{
+		return;
+	}
+
+	laneId = threadIdx.x % warpSize;
+
+	offs_rev.GetParialOffsets(warpIdx, nullptr, &p_offset);
+	val = 0;
+	i = laneId;
+
+	while (i < loop_count)
+	{
+#pragma unroll
+		for (j = 0; j < 4; j++)
+		{
+			if (i >= loop_count) break;
+
+			tg_offset = p_offset + offs_rev.GetBroadcastOffset(i);
+			val += top_gradient[tg_offset];
+			i += warpSize;
+		}
+	}
+
+	//
+	// reduce
+	//
+	val += __shfl_down_sync(FULL_MASK, val, 16);
+	val += __shfl_down_sync(FULL_MASK, val, 8);
+	val += __shfl_down_sync(FULL_MASK, val, 4);
+	val += __shfl_down_sync(FULL_MASK, val, 2);
+	val += __shfl_down_sync(FULL_MASK, val, 1);
+
+	if (laneId == 0)
+	{
+		bottom_gradient[warpIdx] = val * scale;
+	}
+
+}
+
+
+// one thread per output but with 'clone' blocks to reduce the work load
+// good for large to small reductions, where thread count (i.e. number of outputs) is low and therefore work per thread is high
+template<typename Dtype>
+__global__ void gpu_sub_backward_block_expanded_kernel(uint32_t num_outputs, Dtype* top_gradient, Dtype* bottom_gradient, OffsetCalc_reverse_broadcast offs_rev, uint32_t loop_count, uint32_t remaining, Dtype scale)
+{
+	uint32_t threadId;
+	uint32_t i;
+	uint32_t j;
+	uint32_t index;
+	Dtype val[4];
+	uint32_t tg_offset[4];
+	uint32_t start;
+	uint32_t stop;
+	uint32_t p_offset;
+
+
+	threadId = ((blockIdx.x / 64) * blockDim.x) + threadIdx.x;
+	if (threadId >= num_outputs)
+	{
+		return;
+	}
+
+	start = loop_count * ((blockIdx.x) % 64);
+	stop = start + loop_count;
+
+	p_offset = offs_rev.GetParialOffsets(threadId, nullptr);
+
+	val[0] = 0;
+	val[1] = 0;
+	val[2] = 0;
+	val[3] = 0;
+
+	if (loop_count % 4)
+	{
+		for (i = start; i < stop; i += 4)
+		{
+#pragma unroll
+			for (j = 0; j < 4; j++)
+			{
+				if (i + j >= stop) break;
+				tg_offset[j] = p_offset + offs_rev.GetBroadcastOffset(i + j);
+			}
+
+#pragma unroll
+			for (j = 0; j < 4; j++)
+			{
+				if (i + j >= stop) break;
+				val[j] += top_gradient[tg_offset[j]];
+			}
+		}
+
+	}
+	else
+	{
+		// no checks to break out of loops
+		for (i = start; i < stop; i += 4)
+		{
+#pragma unroll
+			for (j = 0; j < 4; j++)
+			{
+				tg_offset[j] = p_offset + offs_rev.GetBroadcastOffset(i + j);
+			}
+
+#pragma unroll
+			for (j = 0; j < 4; j++)
+			{
+				val[j] += top_gradient[tg_offset[j]];
+			}
+		}
+
+	}
+
+
+	if (remaining)
+	{
+		start = loop_count * 64;
+		stop = start + remaining;
+		if ((blockIdx.x % 64) == 0)
+		{
+			i = start;
+			while (i < stop)
+			{
+#pragma unroll
+				for (j = 0; j < 4; j++)
+				{
+					if (i + j >= stop) break;
+					index = p_offset + offs_rev.GetBroadcastOffset(i + j);
+					val[0] += top_gradient[index];
+				}
+				i += 4;
+			}
+		}
+	}
+
+	Dtype valx = scale * (val[0] + val[1] + val[2] + val[3]);
+
+	atomicAdd((float*)&bottom_gradient[threadId], valx);
+
+}
+
+template<typename Dtype>
+void gpu_sub_backward(Dtype* top_gradient, Dtype* bottom_gradient, Dtype* other_operand, const int ndims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides, Dtype scale)
+{
+	// gpu_sub_backward w.r.t. operand 1
+	uint64_t numels_tg;
+	uint64_t num_outputs;
+	int i;
+	uint32_t warps_required;
+	uint32_t warps_per_block;
+	uint32_t num_blocks;
+	uint32_t loop_count;
+	OffsetCalc_reverse_broadcast offs_rev(ndims, op1_dims, op2_dims, tg_dims, op1_strides, op2_strides, tg_strides);
+
+	numels_tg = num_outputs = 1;
+	for (i = 0; i < ndims; i++)
+	{
+		numels_tg *= tg_dims[i];
+		num_outputs *= op1_dims[i];
+	}
+
+	loop_count = numels_tg / num_outputs;
+
+	if (loop_count < 4096)
+	{
+		warps_required = static_cast<uint32_t>(num_outputs); // one warp for each output
+		warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
+		num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
+
+		gpu_sub_backward_kernel<Dtype> << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (num_outputs, top_gradient, bottom_gradient, offs_rev, loop_count, scale);
+	}
+	else
+	{
+		warps_required = static_cast<uint32_t>(num_outputs + 32 - 1) / 32; // one thread for each output
+		warps_per_block = min(4, warps_required);
+		num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
+
+		cudaMemsetAsync(bottom_gradient, 0, sizeof(Dtype) * num_outputs);
+		gpu_sub_backward_block_expanded_kernel << <num_blocks * 64, warps_per_block * CUDA_WARP_SIZE >> > (num_outputs, top_gradient, bottom_gradient, offs_rev, loop_count / 64, loop_count % 64, scale);
+	}
+}
+
+
+
+__global__ void gpu_sub_kernel(float* A, float* B, float* C, int N, int ndims, OffsetCalc_broadcast offs_calc)
+{
+	int remaining = N - block_work_size * blockIdx.x;
+	int idx = blockIdx.x;
+
+	std::tuple<float, float> args[thread_work_size];
+	float results[thread_work_size];
+
+	unrolled_load(args, A, B, idx, remaining, &offs_calc);
+
+#pragma unroll
+	for (int i = 0; i < thread_work_size; i++)
+	{
+		if (bounds_check(i, remaining))
+		{
+			results[i] = std::get<0>(args[i]) - std::get<1>(args[i]);
+		}
+	}
+
+	unrolled_save(C, results, idx, remaining);
+}
+
+template<typename Dtype>
+void gpu_sub(Dtype* A, Dtype* B, Dtype* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims)
+{
+	OffsetCalc_broadcast off_calc(ndims, a_dims, b_dims, c_dims, a_strides, b_strides, c_strides);
+
+	dim3 dimGrid;
+	dim3 dimBlock;
+	int num_blocks;
+	uint64_t N;
+
+	N = numels;
+
+	assert(N < UINT_MAX); // offsets are 32 bit
+
+	num_blocks = (static_cast<int>(N) + 256 - 1) / 256;
+
+	gpu_sub_kernel << < num_blocks, defa_threads >> > ((float*)A, (float*)B, (float*)C, (int)N, ndims, off_calc);
 }
 //-----------------------------------------------------------------------------------------------------
 
@@ -390,6 +1319,43 @@ void gpu_mean_backward(Dtype* bottom_gradient, const Dtype* top_gradient, const 
 	gpu_mean_backward_kernel << <num_blocks, threads_per_block >> > (bottom_gradient, top_gradient, numels, static_cast<Dtype>(1.0f / numels));
 
 }
+
+
+template<typename Dtype>
+__global__ void gpu_mean_backward(Dtype* dst, const Dtype* src, const uint64_t numoutputs, OffsetCalc_broadcast offs, Dtype scale)
+{
+	uint32_t threadId;
+	uint32_t index;
+
+	threadId = blockIdx.x * blockDim.x + threadIdx.x; // absolute thread id
+	if (threadId  >= numoutputs)
+	{
+		return;
+	}
+
+	index = offs.GetOffset(threadId);
+	dst[threadId] = scale * src[index];
+
+}
+
+template<typename Dtype>
+void gpu_mean_backward(Dtype* dst, const Dtype* src, const uint64_t numoutputs, OffsetCalc_broadcast* offs, Dtype scale)
+{
+	uint32_t warps_required;
+	uint32_t warps_per_block;
+	uint32_t num_blocks;
+	uint32_t threads_required;
+
+
+	threads_required = static_cast<uint32_t>(numoutputs); // one thread for each output
+	warps_required = (threads_required + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
+
+	warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
+	num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
+
+	gpu_mean_backward<Dtype> << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (dst, src, numoutputs, *offs, scale);
+}
+
 //-----------------------------------------------------------------------------------------------------
 
 
@@ -411,7 +1377,7 @@ __device__ void warp_reduce(volatile Dtype* data, int thread_id)
 }
 
 template<typename Dtype>
-__global__ void gpu_mean_any_axes_kernel(Dtype* dst, const Dtype* __restrict__ src, OffsetCalc_mean_var offs_calc, uint32_t len, float scale)
+__global__ void gpu_mean_any_axes_kernel(Dtype* dst, const Dtype* __restrict__ src, OffsetCalc_mean_var offs_calc, uint32_t len, uint32_t numels_dst, float scale)
 {
 	uint32_t offset_src;
 	uint32_t offset_dst;
@@ -419,8 +1385,11 @@ __global__ void gpu_mean_any_axes_kernel(Dtype* dst, const Dtype* __restrict__ s
 	float val;
 	int i;
 
-
 	offset_dst = (blockIdx.x * blockDim.x + threadIdx.x);
+	if (offset_dst >= numels_dst)
+	{
+		return;
+	}
 	partial_offset_dst = offs_calc.GetPartialSrcOffset_d(offset_dst);
 
 	val = 0;
@@ -450,6 +1419,11 @@ __global__ void gpu_mean_last_axis_only_kernel(Dtype* dst, const Dtype* src, con
 	total_warps = blockDim.x / warpSize;
 
 	offset_dst = blockIdx.x * total_warps + warpIdx;
+	if (offset_dst >= numels_dst)
+	{
+		return;
+	}
+
 	offset_src = offset_dst * stride;
 
 	val = 0;
@@ -606,8 +1580,8 @@ void gpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels_dst, const uin
 			num_blocks = static_cast<int>(numels_dst) / (num_warps * 4 * 8);
 			num_blocks = max(num_blocks, 1);
 
-			num_blocks = static_cast<int>(numels_dst) / (threads_per_block);
-			gpu_mean_any_axes_kernel<Dtype> << <num_blocks, threads_per_block >> > (dst, src, offs_calc, len, scale);
+			num_blocks = static_cast<int>(numels_dst + threads_per_block - 1) / (threads_per_block);
+			gpu_mean_any_axes_kernel<Dtype> << <num_blocks, threads_per_block >> > (dst, src, offs_calc, len, numels_dst, scale);
 		}
 	}
 	else
@@ -639,8 +1613,60 @@ void gpu_mean(Dtype* dst, const Dtype* src, const uint64_t numels_dst, const uin
 //
 //-----------------------------------------------------------------------------------------------------
 // uses Welford's online algorithm (see:https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_Online_algorithm)
+
 template<typename Dtype>
-__global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, const uint64_t numels, const uint32_t dim_len, float scale)
+__global__ void gpu_var_kernel(Dtype* dst, const Dtype* src, const uint64_t num_outputs, const uint32_t loop_count, OffsetCalc_mean_var offs_calc, float scale)
+{
+	uint32_t partial_offset;
+	uint32_t src_offset;
+	Dtype mean;
+	Dtype count;
+	Dtype mean_b;
+	Dtype count_b;
+	Dtype Ms_b;
+	Dtype n_ab;
+	Dtype temp;
+	Dtype delta;
+	Dtype Ms;
+	uint32_t i;
+	int threadId;
+
+	threadId = blockIdx.x * blockDim.x + threadIdx.x; // absolute thread id 
+
+	if (threadId >= num_outputs)
+	{
+		return;
+	}
+
+	partial_offset = offs_calc.GetPartialSrcOffset_d(threadId);
+	src_offset = offs_calc.GetPartialSrcOffset_s(0);
+
+	mean = src[partial_offset + src_offset];
+	Ms = 0;
+	count = static_cast<Dtype>(1);
+
+	for (i = 1; i < loop_count; i++)
+	{
+		src_offset = offs_calc.GetPartialSrcOffset_s(i);
+
+		count_b = 1;
+		mean_b = src[partial_offset + src_offset];
+		Ms_b = 0;
+
+		n_ab = count + count_b;
+		temp = 1.0f / n_ab;
+
+		delta = mean_b - mean;
+		mean = ((count * mean) + (count_b * mean_b)) * temp;
+		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
+		count = n_ab;
+	}
+
+	dst[threadId] = Ms * scale;
+}
+
+template<typename Dtype>
+__global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, const uint64_t num_outputs, const uint32_t dim_len, float scale)
 {
 	uint32_t offset_src;
 	uint32_t offset_dst;
@@ -657,6 +1683,10 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 
 
 	int warpIdx = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // absolute thread id /  warpSize
+	if (warpIdx >= num_outputs)
+	{
+		return;
+	}
 	int laneIdx = threadIdx.x % warpSize;
 
 	offset_dst = warpIdx;
@@ -690,7 +1720,7 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 		
 		delta = mean_b - mean;
 		//mean += delta * (count_b * temp);
-		mean = ((count * mean) + (count_b * mean_b)) / n_ab;
+		mean = ((count * mean) + (count_b * mean_b)) * temp;
 
 
 		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
@@ -710,7 +1740,7 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 		temp = 1.0f / n_ab;
 		delta = mean_b - mean;
 		//mean += delta * (count_b * temp);
-		mean = ((count * mean) + (count_b * mean_b)) / n_ab;
+		mean = ((count * mean) + (count_b * mean_b)) * temp;
 		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
 		count = n_ab;
 	}
@@ -724,7 +1754,7 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 		temp = 1.0f / n_ab;
 		delta = mean_b - mean;
 		//mean += delta * (count_b * temp);
-		mean = ((count * mean) + (count_b * mean_b)) / n_ab;
+		mean = ((count * mean) + (count_b * mean_b)) * temp;
 		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
 		count = n_ab;
 	}
@@ -739,7 +1769,7 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 		temp = 1.0f / n_ab;
 		delta = mean_b - mean;
 		//mean += delta * (count_b * temp);
-		mean = ((count * mean) + (count_b * mean_b)) / n_ab;
+		mean = ((count * mean) + (count_b * mean_b)) * temp;
 		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
 		count = n_ab;
 	}
@@ -754,7 +1784,7 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 		temp = 1.0f / n_ab;
 		delta = mean_b - mean;
 		//mean += delta * (count_b * temp);
-		mean = ((count * mean) + (count_b * mean_b)) / n_ab;
+		mean = ((count * mean) + (count_b * mean_b)) * temp;
 		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
 		count = n_ab;
 	}
@@ -769,7 +1799,7 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 		temp = 1.0f / n_ab;
 		delta = mean_b - mean;
 		//mean += delta * (count_b * temp);
-		mean = ((count * mean) + (count_b * mean_b)) / n_ab;
+		mean = ((count * mean) + (count_b * mean_b)) * temp;
 		Ms = Ms + Ms_b + (delta * delta) * (count * count_b) * temp;
 		count = n_ab;
 	}
@@ -784,9 +1814,9 @@ __global__ void gpu_var_last_axis_only_kernel(Dtype* dst, const Dtype* src, cons
 }
 
 template<typename Dtype>
-void gpu_var(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes)
+void gpu_var(Dtype* dst, const Dtype* src, const uint64_t num_outputs, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, bool unbiased)
 {
-	uint32_t len;
+	uint32_t loop_count;
 	int naxes;
 	int i;
 	int num_blocks;
@@ -797,30 +1827,40 @@ void gpu_var(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t
 
 	naxes = ndims_src - ndims_dst;
 
-
-	if (naxes > 1 || (axes[0] != ndims_src - 1))
+	loop_count = 1;
+	for (i = 0; i < naxes; i++)
 	{
-		//OffsetCalc_mean_std_simple offs_calc(strides_dst, strides_src, ndims_dst, ndims_src, dims_src, axes);
-		LTEN_ERR("Not yet implemented: gpu_var for naxes > 1 or axis != last axis"); // need to copy and clean up implementation from merge3
+		loop_count *= static_cast<uint32_t>(dims_src[axes[i]]);
+	}
+
+	if (unbiased)
+	{
+		scale = 1.0f / (loop_count - 1);
 	}
 	else
 	{
-		len = 1;
-		for (i = 0; i < naxes; i++)
-		{
-			len *= static_cast<uint32_t>(dims_src[axes[i]]);
-		}
+		scale = 1.0f / loop_count;
+	}
 
+	if (naxes > 1 || (axes[0] != ndims_src - 1))
+	{
+		OffsetCalc_mean_var offs_calc(strides_dst, strides_src, ndims_dst, ndims_src, dims_src, axes);
 
-		warps_required = static_cast<uint32_t>(numels); // one warp for each output (note: numels is dst numels)
+		warps_required = (num_outputs + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE; // one thread per output
+		warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
+		threads_per_block = warps_per_block * CUDA_WARP_SIZE;
+		num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
+
+		gpu_var_kernel<Dtype> << <num_blocks, threads_per_block >> > (dst, src, num_outputs, loop_count, offs_calc, scale);
+	}
+	else
+	{
+		warps_required = static_cast<uint32_t>(num_outputs); // one warp for each output
 		warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
 		threads_per_block = warps_per_block * CUDA_WARP_SIZE;
 		num_blocks = (warps_required + warps_per_block - 1)/ warps_per_block;
 
-		scale = 1.0f / (len - 1);
-
-		gpu_var_last_axis_only_kernel<Dtype> << <num_blocks, threads_per_block >> > (dst, src, numels, len, scale);
-
+		gpu_var_last_axis_only_kernel<Dtype> << <num_blocks, threads_per_block >> > (dst, src, num_outputs, loop_count, scale);
 	}
 
 }
@@ -832,7 +1872,7 @@ void gpu_var(Dtype* dst, const Dtype* src, const uint64_t numels, const uint64_t
 //
 //-----------------------------------------------------------------------------------------------------
 template<typename Dtype>
-__global__ void gpu_layer_norm_last_axis_only_kernel(Dtype* dst, const Dtype* src, const uint64_t numels, const uint32_t dim_len, float scale, Dtype* weight, Dtype* bias, Dtype* ln, Dtype* sd)
+__global__ void gpu_layer_norm_last_axis_only_kernel(Dtype* dst, const Dtype* src, const uint32_t warps_required, const uint32_t dim_len, float scale, Dtype* weight, Dtype* bias, Dtype* ln, Dtype* sd)
 {
 	uint32_t offset_src;
 	float count;
@@ -846,9 +1886,13 @@ __global__ void gpu_layer_norm_last_axis_only_kernel(Dtype* dst, const Dtype* sr
 	float temp;
 	float std;
 	int i;
-	float epsilon = 0;
+	float epsilon = 1e-5;
 
 	int warpIdx = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // absolute thread id /  warpSize
+	if (warpIdx >= warps_required)
+	{
+		return;
+	}
 	int laneIdx = threadIdx.x % warpSize;
 
 	offset_src = warpIdx * dim_len;
@@ -1027,12 +2071,12 @@ void gpu_layer_norm(Dtype* dst, const Dtype* src, const uint64_t numels, const u
 		scale = 1.0f / len; // use biased estimator
 
 
-		gpu_layer_norm_last_axis_only_kernel<Dtype> << <num_blocks, threads_per_block >> > (dst, src, numels, len, scale, weight, bias, ln, sd);
+		gpu_layer_norm_last_axis_only_kernel<Dtype> << <num_blocks, threads_per_block >> > (dst, src, warps_required, len, scale, weight, bias, ln, sd);
 	}
 }
 
 template<typename Dtype>
-__global__ void gpu_layer_norm_wt_bias_backward_kernel(Dtype* wt_grad, Dtype* bias_grad, const Dtype* top_gradient, Dtype* feeder_gradient, Dtype* lnorm, Dtype* sd, Dtype* wt, const uint64_t numels, const uint32_t dim_len)
+__global__ void gpu_layer_norm_wt_bias_backward_kernel(Dtype* wt_grad, Dtype* bias_grad, const Dtype* top_gradient, Dtype* feeder_gradient, Dtype* lnorm, Dtype* sd, Dtype* wt, const uint64_t numels, const uint32_t dim_len, int warps_per_block)
 {
 	uint32_t offset_src;
 	uint32_t len;
@@ -1047,13 +2091,14 @@ __global__ void gpu_layer_norm_wt_bias_backward_kernel(Dtype* wt_grad, Dtype* bi
 
 	int warpIdx = threadIdx.x / warpSize; // * local warp id = local thread id /  warpSize
 	int laneIdx = threadIdx.x % warpSize;
+	
 
 	offset_src = blockIdx.x * warpSize + warpIdx * dim_len + laneIdx; // consecutive rows for each warp
 	wts = wt[blockIdx.x * warpSize + laneIdx];
 	w_grd = 0;
 	b_grd = 0;
 
-	len = numels / dim_len / 16;
+	len = numels / dim_len / warps_per_block; // OPTOPT: move this division out to host code
 
 	for (i = 0; i < len; i++)
 	{
@@ -1065,7 +2110,7 @@ __global__ void gpu_layer_norm_wt_bias_backward_kernel(Dtype* wt_grad, Dtype* bi
 
 			feeder_gradient[offset_src] = top_grd * wts;
 		}
-		offset_src += dim_len * 16;
+		offset_src += dim_len * warps_per_block;
 	}
 
 	s1[warpIdx * warpSize + laneIdx] = w_grd;
@@ -1081,7 +2126,7 @@ __global__ void gpu_layer_norm_wt_bias_backward_kernel(Dtype* wt_grad, Dtype* bi
 	w_grd = 0;
 	b_grd = 0;
 
-	for (i = 0; i < 16; i++)
+	for (i = 0; i < warps_per_block; i++)
 	{
 		w_grd += s1[i * warpSize + laneIdx];
 		b_grd += s2[i * warpSize + laneIdx];
@@ -1094,7 +2139,7 @@ __global__ void gpu_layer_norm_wt_bias_backward_kernel(Dtype* wt_grad, Dtype* bi
 
 
 template<typename Dtype>
-__global__ void gpu_layer_norm_backward_kernel(Dtype* x_grad, Dtype* wt, Dtype* lnorm, Dtype* sd, Dtype* feeder_gradient, const uint64_t numels, const uint32_t dim_len)
+__global__ void gpu_layer_norm_backward_kernel(Dtype* x_grad, Dtype* wt, Dtype* lnorm, Dtype* sd, Dtype* feeder_gradient, const uint64_t numels, const uint32_t ln_dim, float inv_dim, uint32_t loop_count)
 {
 	uint32_t offset;
 	uint32_t i;
@@ -1112,16 +2157,18 @@ __global__ void gpu_layer_norm_backward_kernel(Dtype* x_grad, Dtype* wt, Dtype* 
 	int warpIdx = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // absolute thread id /  warpSize
 	int laneIdx = threadIdx.x % warpSize;
 
-	offset = dim_len * warpIdx;
+	offset = ln_dim * warpIdx;
 	m_g = 0;
 	tmp = 0;
 	invsd = 1.0f / sd[blockIdx.x];
 
 	index = offset + laneIdx;
+
+
 #pragma unroll
-	for (i = 0; i < 24; i++)
+	for (i = 0; i < loop_count; i++)
 	{
-		if ((index - offset) < dim_len)
+		if ((index - offset) < ln_dim)
 		{
 			f_g = feeder_gradient[index];
 			l_n = lnorm[index];
@@ -1134,8 +2181,7 @@ __global__ void gpu_layer_norm_backward_kernel(Dtype* x_grad, Dtype* wt, Dtype* 
 			index += warpSize;
 		}
 	}
-
-
+	
 	//
 	// reduce
 	//
@@ -1159,13 +2205,11 @@ __global__ void gpu_layer_norm_backward_kernel(Dtype* x_grad, Dtype* wt, Dtype* 
 	tmp = __shfl_sync(FULL_MASK, tmp, 0);
 
 
-	float inv_dim = 0.00130208333333333333333333333333f;
-
 	index = offset + laneIdx;
 #pragma unroll
-	for (i = 0; i < 24; i++)
+	for (i = 0; i < loop_count; i++)
 	{
-		if ((index - offset) < dim_len)
+		if ((index - offset) < ln_dim)
 		{
 			//x_grad[index] = (feeder_gradient[index] + inv_dim * lnorm[index] * tmp) *  invsd + inv_dim * m_g;
 			x_grad[index] = (fg[laneIdx + i * warpSize] + inv_dim * ln[laneIdx + i * warpSize] * tmp) *  invsd + inv_dim * m_g;
@@ -1178,7 +2222,7 @@ __global__ void gpu_layer_norm_backward_kernel(Dtype* x_grad, Dtype* wt, Dtype* 
 
 
 template<typename Dtype>
-void gpu_layer_norm_backwards(void* vlayer_norm, Dtype* x, Dtype* top_gradient, Dtype* bottom_gradient)
+void gpu_layer_norm_backwards(void* vlayer_norm, Dtype* x, Dtype* top_gradient, Dtype* bottom_gradient, const uint64_t* dst_dims, uint32_t ndims, const uint32_t* axes, uint32_t naxes, Dtype* feeder_gradient)
 {
 	lten::LayerNorm* layer_norm;
 	Dtype* ln;
@@ -1186,30 +2230,54 @@ void gpu_layer_norm_backwards(void* vlayer_norm, Dtype* x, Dtype* top_gradient, 
 	Dtype* wt;
 	Dtype* wt_grad;
 	Dtype* bias_grad;
-	Dtype* feeder_gradient;
+	uint32_t i;
+	uint64_t numels;
+	int warps_per_block;
+	int num_blocks;
+	uint64_t loop_count;
 
-	layer_norm = (lten::LayerNorm*)vlayer_norm;
-
-	uint64_t numels = 4 * 1568 * 768;
-
-	ln = layer_norm->get_ln()->get_mdarray<Dtype>()->GetDataPtr();
-	sd = layer_norm->get_sd()->get_mdarray<Dtype>()->GetDataPtr();
-
-	if (layer_norm->is_affine())
+	if (naxes > 1 || (axes[0] != ndims - 1))
 	{
-		wt = layer_norm->get_weights()->get_mdarray<Dtype>()->GetDataPtr();
-		wt_grad = layer_norm->get_weights()->get_gradients_mdarray<Dtype>()->GetDataPtr();
-		bias_grad = layer_norm->get_bias()->get_gradients_mdarray<Dtype>()->GetDataPtr();
-		feeder_gradient = (Dtype*)layer_norm->get_feeder_gradient()->get_data_ptr();
-
-		gpu_layer_norm_wt_bias_backward_kernel<Dtype> << <24, 32 * 16 >> > (wt_grad, bias_grad, top_gradient, feeder_gradient, ln, sd, wt, numels, 768);
+		LTEN_ERR("Not yet implemented: gpu_layer_norm_backwards for naxes > 1 or axis != last axis");
 	}
 	else
 	{
-		feeder_gradient = top_gradient;
-	}
+		if(dst_dims[ndims - 1] % CUDA_WARP_SIZE)
+		{
+			LTEN_ERR("Only muliples of CUDA_WARP_SIZE for now");
+		}
+		
 
-	gpu_layer_norm_backward_kernel<Dtype> << <392 * 16, 32 * 1 >> > (bottom_gradient, wt, ln, sd, feeder_gradient, numels, 768);
+		layer_norm = (lten::LayerNorm*)vlayer_norm;
+
+		numels = 1;
+		for (i = 0; i < ndims; i++)
+		{
+			numels *= dst_dims[i];
+		}
+
+		ln = layer_norm->get_ln()->get_mdarray<Dtype>()->GetDataPtr();
+		sd = layer_norm->get_sd()->get_mdarray<Dtype>()->GetDataPtr();
+
+		if (layer_norm->is_affine())
+		{
+			wt = layer_norm->get_weights()->get_mdarray<Dtype>()->GetDataPtr();
+			wt_grad = layer_norm->get_weights()->get_gradients_mdarray<Dtype>()->GetDataPtr();
+			bias_grad = layer_norm->get_bias()->get_gradients_mdarray<Dtype>()->GetDataPtr();
+
+			warps_per_block = 16;
+			num_blocks = (dst_dims[ndims - 1] + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
+			gpu_layer_norm_wt_bias_backward_kernel<Dtype> << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (wt_grad, bias_grad, top_gradient, feeder_gradient, ln, sd, wt, numels, dst_dims[ndims-1], warps_per_block);
+		}
+		else
+		{
+			feeder_gradient = top_gradient;
+		}
+
+		num_blocks = numels / dst_dims[ndims - 1];
+		loop_count = (dst_dims[ndims - 1] + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
+		gpu_layer_norm_backward_kernel<Dtype> << <num_blocks, CUDA_WARP_SIZE >> > (bottom_gradient, wt, ln, sd, feeder_gradient, numels, dst_dims[ndims - 1], 1.0f / dst_dims[ndims - 1], loop_count);
+	}
 
 }
 
@@ -2019,6 +3087,120 @@ void set_addresses(Dtype* A, Dtype* B, Dtype* C, POINTER_ARRAYS* addresses, cons
 }
 //-----------------------------------------------------------------------------------------------------
 
+//-----------------------------------------------------------------------------------------------------
+//
+// misc reduction functions
+//
+//-----------------------------------------------------------------------------------------------------
+
+template<typename Dtype>
+__global__ void gpu_reduce_kernel(uint32_t numoutputs, OffsetCalc_reverse_broadcast offs, Dtype* dst, Dtype* src, uint32_t loop_count)
+{
+	// one warp for each output
+	uint32_t warpId;
+	uint32_t laneId;
+	uint32_t i;
+	uint32_t other_operand_offset;
+	uint32_t tg_offset;
+	Dtype val;
+
+	warpId = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // absolute thread id /  warpSize
+	if (warpId >= numoutputs)
+	{
+		return;
+	}
+
+	laneId = threadIdx.x % warpSize;
+
+	val = 0;
+	for (i = laneId; i < loop_count; i += warpSize)
+	{
+		offs.GetOffsets(warpId, i, &other_operand_offset, &tg_offset);
+		val += src[tg_offset];
+	}
+
+	//
+	// reduce
+	//
+	val += __shfl_down_sync(FULL_MASK, val, 16);
+	val += __shfl_down_sync(FULL_MASK, val, 8);
+	val += __shfl_down_sync(FULL_MASK, val, 4);
+	val += __shfl_down_sync(FULL_MASK, val, 2);
+	val += __shfl_down_sync(FULL_MASK, val, 1);
+
+	if (laneId == 0)
+	{
+		dst[warpId] = val;
+	}
+
+}
+
+template<typename Dtype>
+void gpu_reduce(uint32_t numels_dst, uint32_t numels_src, OffsetCalc_reverse_broadcast* offs, Dtype* dst, Dtype* src) // reducing src into dst
+{
+	uint32_t warps_required;
+	uint32_t warps_per_block;
+	uint32_t num_blocks;
+	uint32_t loop_count;
+
+
+	loop_count = numels_src / numels_dst;
+	warps_required = static_cast<uint32_t>(numels_dst); // one warp for each output
+	warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
+	num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
+
+	gpu_reduce_kernel<Dtype> << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (numels_dst, *offs, dst, src, loop_count);
+	
+}
+
+//-----------------------------------------------------------------------------------------------------
+//
+// memory test functions for debugging perf
+//
+//-----------------------------------------------------------------------------------------------------
+__global__ void memory_test_kernel3(float* dst, const float* src, int numels)
+{
+	uint32_t thread_id;
+
+	thread_id = blockIdx.x * blockDim.x + threadIdx.x; // global index;
+
+	atomicAdd((float*)&dst[thread_id], src[thread_id]);
+
+}
+
+
+__global__ void memory_test_kernel2(float* dst, const float* __restrict__ src, int numels)
+{
+	uint32_t thread_id;
+	float4 val4;
+
+	thread_id = blockIdx.x * blockDim.x + threadIdx.x; // global index;
+	thread_id *= 4;
+
+	val4 = *(reinterpret_cast<const float4*>(&src[thread_id]));
+
+	*(reinterpret_cast<float4*>(&dst[thread_id])) = val4;
+}
+
+__global__ void memory_test_kernel(float* dst, const float* src, int numels)
+{
+	uint32_t thread_id;
+
+	thread_id = blockIdx.x * blockDim.x + threadIdx.x; // global index;
+
+	dst[thread_id] = src[thread_id];
+}
+
+void memory_test(float* dst, float* src, int numels)
+{
+	int num_blocks;
+
+	num_blocks = numels / (32 * 16);
+	memory_test_kernel << <num_blocks, 32 * 16 >> > (dst, src, numels);
+	//memory_test_kernel2 << <num_blocks/4, 32 * 16 >> > (dst, src, numels);
+	//memory_test_kernel3 << <num_blocks, 32 * 16 >> > (dst, src, numels);
+}
+
 template void gpu_mul<float>(uint64_t N, float* A, float* B, float* C);
 template void gpu_mul<int>(uint64_t N, int* A, int* B, int* C);
 template void gpu_mul<uint8_t>(uint64_t N, uint8_t* A, uint8_t* B, uint8_t* C);
@@ -2027,10 +3209,62 @@ template void gpu_mul_backward<float>(uint64_t N, float* A, float* B, float* C);
 template void gpu_mul_backward<int>(uint64_t N, int* A, int* B, int* C);
 template void gpu_mul_backward<uint8_t>(uint64_t N, uint8_t* A, uint8_t* B, uint8_t* C);
 
+template void gpu_mul_backward<float>(float* top_gradient, float* bottom_gradient, float* other_operand, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides);
+template void gpu_mul_backward<int>(int* top_gradient, int* bottom_gradient, int* other_operand, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides);
+template void gpu_mul_backward<uint8_t>(uint8_t* top_gradient, uint8_t* bottom_gradient, uint8_t* other_operand, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides);
+
 template void gpu_mul<float>(float* A, float* B, float* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
 template void gpu_mul<int>(int* A, int* B, int* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
 template void gpu_mul<uint8_t>(uint8_t* A, uint8_t* B, uint8_t* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
 
+template void gpu_div<float>(uint64_t N, float* A, float* B, float* C);
+template void gpu_div<int>(uint64_t N, int* A, int* B, int* C);
+template void gpu_div<uint8_t>(uint64_t N, uint8_t* A, uint8_t* B, uint8_t* C);
+
+template void gpu_div_backward<float>(uint64_t N, float* op1, float* op2, float* tg, float* bg, bool divisor);
+template void gpu_div_backward<int>(uint64_t N, int* op1, int* op2, int* tg, int* bg, bool divisor);
+template void gpu_div_backward<uint8_t>(uint64_t N, uint8_t* op1, uint8_t* op2, uint8_t* tg, uint8_t* bg, bool divisor);
+
+
+template void gpu_div_backward<float>(float* top_gradient, float* bottom_gradient, float* operand1, float* operand2, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides, bool divisor);
+template void gpu_div_backward<int>(int* top_gradient, int* bottom_gradient, int* operand1, int* operand2, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides, bool divisor);
+template void gpu_div_backward<uint8_t>(uint8_t* top_gradient, uint8_t* bottom_gradient, uint8_t* operand1, uint8_t* operand2, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides, bool divisor);
+
+template void gpu_div<float>(float* A, float* B, float* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
+template void gpu_div<int>(int* A, int* B, int* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
+template void gpu_div<uint8_t>(uint8_t* A, uint8_t* B, uint8_t* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
+
+template void gpu_add<float>(uint64_t N, float* A, float* B, float* C);
+template void gpu_add<int>(uint64_t N, int* A, int* B, int* C);
+template void gpu_add<uint8_t>(uint64_t N, uint8_t* A, uint8_t* B, uint8_t* C);
+
+template void gpu_add_backward<float>(uint64_t N, float* A, float* B, float* C);
+template void gpu_add_backward<int>(uint64_t N, int* A, int* B, int* C);
+template void gpu_add_backward<uint8_t>(uint64_t N, uint8_t* A, uint8_t* B, uint8_t* C);
+
+template void gpu_add_backward<float>(float* top_gradient, float* bottom_gradient, float* other_operand, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides);
+template void gpu_add_backward<int>(int* top_gradient, int* bottom_gradient, int* other_operand, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides);
+template void gpu_add_backward<uint8_t>(uint8_t* top_gradient, uint8_t* bottom_gradient, uint8_t* other_operand, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides);
+
+template void gpu_add<float>(float* A, float* B, float* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
+template void gpu_add<int>(int* A, int* B, int* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
+template void gpu_add<uint8_t>(uint8_t* A, uint8_t* B, uint8_t* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
+
+template void gpu_sub<float>(uint64_t N, float* A, float* B, float* C);
+template void gpu_sub<int>(uint64_t N, int* A, int* B, int* C);
+template void gpu_sub<uint8_t>(uint64_t N, uint8_t* A, uint8_t* B, uint8_t* C);
+
+template void gpu_sub_backward<float>(uint64_t N, float* A, float* B, float* C, float scale);
+template void gpu_sub_backward<int>(uint64_t N, int* A, int* B, int* C, int  scale);
+template void gpu_sub_backward<uint8_t>(uint64_t N, uint8_t* A, uint8_t* B, uint8_t* C, uint8_t scale);
+
+template void gpu_sub_backward<float>(float* top_gradient, float* bottom_gradient, float* other_operand, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides, float scale);
+template void gpu_sub_backward<int>(int* top_gradient, int* bottom_gradient, int* other_operand, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides, int scale);
+template void gpu_sub_backward<uint8_t>(uint8_t* top_gradient, uint8_t* bottom_gradient, uint8_t* other_operand, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides, uint8_t scale);
+
+template void gpu_sub<float>(float* A, float* B, float* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
+template void gpu_sub<int>(int* A, int* B, int* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
+template void gpu_sub<uint8_t>(uint8_t* A, uint8_t* B, uint8_t* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
 
 template void gpu_mean<float>(float* dst, const float* src, const uint64_t numels);
 template void gpu_mean<int>(int* dst, const int* src, const uint64_t numels);
@@ -2040,17 +3274,25 @@ template void gpu_mean_backward<float>(float* bottom_gradient, const float* top_
 template void gpu_mean_backward<int>(int* bottom_gradient, const int* top_gradient, const uint64_t numels);
 template void gpu_mean_backward<uint8_t>(uint8_t* bottom_gradient, const uint8_t* top_gradient, const uint64_t numels);
 
+template void gpu_mean_backward<float>(float* dst, const float* src, const uint64_t numoutputs, OffsetCalc_broadcast* offs, float scale);
+template void gpu_mean_backward<int>(int* dst, const int* src, const uint64_t numoutputs, OffsetCalc_broadcast* offs, int scale);
+template void gpu_mean_backward<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numoutputs, OffsetCalc_broadcast* offs, uint8_t scale);
+
 template void gpu_mean<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
 template void gpu_mean<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
 template void gpu_mean<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
 
-template void gpu_var<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
-template void gpu_var<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
-template void gpu_var<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes);
+template void gpu_var<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, bool unbiased);
+template void gpu_var<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, bool unbiased);
+template void gpu_var<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, bool unbiased);
 
 template void gpu_layer_norm<float>(float* dst, const float* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, float* weights, float* bias, float* ln, float* sd);
 template void gpu_layer_norm<int>(int* dst, const int* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, int* weights, int* bias, int* ln, int* sd);
 template void gpu_layer_norm<uint8_t>(uint8_t* dst, const uint8_t* src, const uint64_t numels, const uint64_t* strides_dst, const uint64_t* strides_src, int ndims_dst, int ndims_src, const uint64_t* dims_src, const uint32_t* axes, uint8_t* weights, uint8_t* bias, uint8_t* ln, uint8_t* sd);
+
+template void gpu_layer_norm_backwards<float>(void* vlayer_norm, float* x, float* top_gradient, float* bottom_gradient, const uint64_t* dst_dims, uint32_t ndims, const uint32_t* axes, uint32_t naxes, float* feeder_gradient);
+template void gpu_layer_norm_backwards<int>(void* vlayer_norm, int* x, int* top_gradient, int* bottom_gradient, const uint64_t* dst_dims, uint32_t ndims, const uint32_t* axes, uint32_t naxes, int* feeder_gradient);
+template void gpu_layer_norm_backwards<uint8_t>(void* vlayer_norm, uint8_t* x, uint8_t* top_gradient, uint8_t* bottom_gradient, const uint64_t* dst_dims, uint32_t ndims, const uint32_t* axes, uint32_t naxes, uint8_t* feeder_gradient);
 
 template void gpu_transpose<float>(const float* A, float* At, const uint64_t numels, const uint64_t* a_strides, const uint64_t* at_strides, const int ndims);
 template void gpu_transpose<int>(const int* A, int* At, const uint64_t numels, const uint64_t* a_strides, const uint64_t* at_strides, const int ndims);
@@ -2093,12 +3335,6 @@ template void set_addresses<int>(int* A, int* B, int* C, POINTER_ARRAYS* address
 template void set_addresses<uint8_t>(uint8_t* A, uint8_t* B, uint8_t* C, POINTER_ARRAYS* addresses, const OFFSET_ARRAYS* offsets, const uint64_t num_addresses);
 
 
-
-template void gpu_layer_norm_backwards<float>(void* vlayer_norm, float* x, float* top_gradient, float* bottom_gradient);
-template void gpu_layer_norm_backwards<int>(void* vlayer_norm, int* x, int* top_gradient, int* bottom_gradient);
-template void gpu_layer_norm_backwards<uint8_t>(void* vlayer_norm, uint8_t* x, uint8_t* top_gradient, uint8_t* bottom_gradient);
-
-
 template void gpu_gelu<float>(float* dst, float* src, uint64_t len);
 template void gpu_gelu<int>(int* dst, int* src, uint64_t len);
 template void gpu_gelu<uint8_t>(uint8_t* dst, uint8_t* src, uint64_t len);
@@ -2107,3 +3343,7 @@ template void gpu_gelu<uint8_t>(uint8_t* dst, uint8_t* src, uint64_t len);
 template void gpu_gelu_backward<float>(float* bottom_gradient, const float* top_gradient, const float* src, uint64_t len);
 template void gpu_gelu_backward<int>(int* bottom_gradient, const int* top_gradient, const int* src, uint64_t len);
 template void gpu_gelu_backward<uint8_t>(uint8_t* bottom_gradient, const uint8_t* top_gradient, const uint8_t* src, uint64_t len);
+
+template void gpu_reduce<float>(uint32_t numels_dst, uint32_t numels_src, OffsetCalc_reverse_broadcast* offs, float* dst, float* src);
+template void gpu_reduce<int>(uint32_t numels_dst, uint32_t numels_src, OffsetCalc_reverse_broadcast* offs, int* dst, int* src);
+template void gpu_reduce<uint8_t>(uint32_t numels_dst, uint32_t numels_src, OffsetCalc_reverse_broadcast* offs, uint8_t* dst, uint8_t* src);
