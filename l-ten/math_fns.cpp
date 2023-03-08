@@ -844,17 +844,25 @@ void cpu_layer_norm(Dtype* dst, const Dtype* src, const uint64_t numels, const u
 
 		std = sqrt(Ms * scale + epsilon);
 		inv_std = 1.0f / std;
-		sd[i] = std;
+		
+		if (sd)
+		{
+			sd[i] = std; // save this for backprop
+		}
+		
 
 		for (j = 0; j < ln_dim; j++) // traverse ln axis and compute layer norm
 		{
 			temp = src[src_offset + j];
 			temp = (temp - mean) * inv_std;
 
-			ln[src_offset + j] = temp;
+			if (ln)
+			{
+				ln[src_offset + j] = temp; // save this for backprop
+			}
+
 			if (weight)
 			{
-				ln[src_offset + j] = temp;
 				temp = temp * weight[j] + bias[j];
 			}
 
@@ -923,10 +931,6 @@ void cpu_layer_norm_backwards(void* vlayer_norm, Dtype* x, Dtype* top_gradient, 
 			bias_grad[i] = b_grd;	
 			
 		}
-
-		//warps_per_block = 16;
-		//num_blocks = (dst_dims[ndims - 1] + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
-		//gpu_layer_norm_wt_bias_backward_kernel<Dtype> << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (wt_grad, bias_grad, top_gradient, feeder_gradient, ln, sd, wt, numels, dst_dims[ndims - 1], warps_per_block);
 	}
 	else
 	{
@@ -945,8 +949,6 @@ void cpu_layer_norm_backwards(void* vlayer_norm, Dtype* x, Dtype* top_gradient, 
 	float l_n;
 	uint32_t ln_dim;
 	float inv_dim;
-	//float fg[4096];
-	//float ln[4096];
 
 
 	num_workers = numels / loop_count;
@@ -976,23 +978,6 @@ void cpu_layer_norm_backwards(void* vlayer_norm, Dtype* x, Dtype* top_gradient, 
 		}
 
 	}
-
-	/*
-	index = 0;
-	for (i = 0; i < num_workers; i++)
-	{
-		invsd = 1.0f / sd[i];
-
-		for (j = 0; j < loop_count; j++)
-		{
-			f_g = feeder_gradient[index];
-			l_n = ln[index];
-
-			bottom_gradient[index] = (f_g + inv_dim * l_n * tmp) *  invsd + inv_dim * m_g;
-			index++;
-		}
-	}
-	*/
 
 }
 

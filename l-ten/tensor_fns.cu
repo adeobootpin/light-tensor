@@ -2011,7 +2011,10 @@ __global__ void gpu_layer_norm_last_axis_only_kernel(Dtype* dst, const Dtype* sr
 
 	if (laneIdx == 0)
 	{
-		sd[warpIdx] = std;
+		if (sd)
+		{
+			sd[warpIdx] = std; // save this for backprop
+		}	
 	}
 
 
@@ -2024,10 +2027,13 @@ __global__ void gpu_layer_norm_last_axis_only_kernel(Dtype* dst, const Dtype* sr
 		temp = src[offset_src + i];
 		temp = (temp - mean) * std;
 
+		if (ln)
+		{
+			ln[offset_src + i] = temp; // save this for backprop
+		}
+
 		if (weight)
 		{
-			ln[offset_src + i] = temp;
-
 			temp = temp * weight[i] + bias[i];
 		}
 
@@ -2076,7 +2082,66 @@ void gpu_layer_norm(Dtype* dst, const Dtype* src, const uint64_t numels, const u
 }
 
 template<typename Dtype>
-__global__ void gpu_layer_norm_wt_bias_backward_kernel(Dtype* wt_grad, Dtype* bias_grad, const Dtype* top_gradient, Dtype* feeder_gradient, Dtype* lnorm, Dtype* sd, Dtype* wt, const uint64_t numels, const uint32_t dim_len, int warps_per_block)
+__global__ void gpu_layer_norm_wt_bias_backward_kernel(Dtype* wt_grad, Dtype* bias_grad, const Dtype* top_gradient, Dtype* feeder_gradient, Dtype* ln, Dtype* sd, Dtype* wt, const uint64_t num_outputs, const uint32_t loop_count )
+{
+	int warpId;
+	int laneId;	
+	Dtype w_grd;
+	Dtype b_grd;
+	Dtype top_grd;
+	Dtype wts;
+	uint32_t i;
+	uint32_t offset_src;
+
+	warpId = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // absolute thread id /  warpSize
+	if (warpId >= num_outputs)
+	{
+		return;
+	}
+
+	laneId = threadIdx.x % warpSize;
+
+	i = laneId;
+	wts = wt[warpId];
+	w_grd = 0;
+	b_grd = 0;
+	
+	while (i < loop_count)
+	{
+		offset_src = i * num_outputs + warpId;
+		top_grd = top_gradient[offset_src];
+		w_grd += top_grd * ln[offset_src];
+		b_grd += top_grd;
+
+		feeder_gradient[offset_src] = top_grd * wts;
+
+		i += warpSize;
+	}
+
+	//
+	// reduce
+	//
+	w_grd += __shfl_down_sync(FULL_MASK, w_grd, 16);
+	w_grd += __shfl_down_sync(FULL_MASK, w_grd, 8);
+	w_grd += __shfl_down_sync(FULL_MASK, w_grd, 4);
+	w_grd += __shfl_down_sync(FULL_MASK, w_grd, 2);
+	w_grd += __shfl_down_sync(FULL_MASK, w_grd, 1);
+
+	b_grd += __shfl_down_sync(FULL_MASK, b_grd, 16);
+	b_grd += __shfl_down_sync(FULL_MASK, b_grd, 8);
+	b_grd += __shfl_down_sync(FULL_MASK, b_grd, 4);
+	b_grd += __shfl_down_sync(FULL_MASK, b_grd, 2);
+	b_grd += __shfl_down_sync(FULL_MASK, b_grd, 1);
+
+	if (laneId == 0)
+	{
+		wt_grad[warpId] = w_grd;
+		bias_grad[warpId] = b_grd;
+	}
+}
+
+template<typename Dtype>
+__global__ void gpu_layer_norm_wt_bias_backward_kernel_xx(Dtype* wt_grad, Dtype* bias_grad, const Dtype* top_gradient, Dtype* feeder_gradient, Dtype* lnorm, Dtype* sd, Dtype* wt, const uint64_t numels, const uint32_t dim_len, int warps_per_block)
 {
 	uint32_t offset_src;
 	uint32_t len;
@@ -2232,9 +2297,11 @@ void gpu_layer_norm_backwards(void* vlayer_norm, Dtype* x, Dtype* top_gradient, 
 	Dtype* bias_grad;
 	uint32_t i;
 	uint64_t numels;
-	int warps_per_block;
+	uint32_t warps_per_block;
+	uint32_t warps_required;
 	int num_blocks;
 	uint64_t loop_count;
+	uint32_t num_outputs;
 
 	if (naxes > 1 || (axes[0] != ndims - 1))
 	{
@@ -2242,10 +2309,10 @@ void gpu_layer_norm_backwards(void* vlayer_norm, Dtype* x, Dtype* top_gradient, 
 	}
 	else
 	{
-		if(dst_dims[ndims - 1] % CUDA_WARP_SIZE)
-		{
-			LTEN_ERR("Only muliples of CUDA_WARP_SIZE for now");
-		}
+		//if(dst_dims[ndims - 1] % CUDA_WARP_SIZE)
+		//{
+		//	LTEN_ERR("Only muliples of CUDA_WARP_SIZE for now");
+		//}
 		
 
 		layer_norm = (lten::LayerNorm*)vlayer_norm;
@@ -2265,9 +2332,19 @@ void gpu_layer_norm_backwards(void* vlayer_norm, Dtype* x, Dtype* top_gradient, 
 			wt_grad = layer_norm->get_weights()->get_gradients_mdarray<Dtype>()->GetDataPtr();
 			bias_grad = layer_norm->get_bias()->get_gradients_mdarray<Dtype>()->GetDataPtr();
 
-			warps_per_block = 16;
-			num_blocks = (dst_dims[ndims - 1] + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
-			gpu_layer_norm_wt_bias_backward_kernel<Dtype> << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (wt_grad, bias_grad, top_gradient, feeder_gradient, ln, sd, wt, numels, dst_dims[ndims-1], warps_per_block);
+			num_outputs = dst_dims[ndims - 1];
+			warps_required = static_cast<uint32_t>(num_outputs); // one warp for each output
+			warps_per_block = min(LTEN_MAX_WARPS_PER_BLOCK, warps_required);
+			num_blocks = (warps_required + warps_per_block - 1) / warps_per_block;
+
+			loop_count = numels / num_outputs;
+
+			gpu_layer_norm_wt_bias_backward_kernel<Dtype> << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (wt_grad, bias_grad, top_gradient, feeder_gradient, ln, sd, wt, num_outputs, loop_count);
+
+
+			//warps_per_block = 16;
+			//num_blocks = (dst_dims[ndims - 1] + CUDA_WARP_SIZE - 1) / CUDA_WARP_SIZE;
+			//gpu_layer_norm_wt_bias_backward_kernel<Dtype> << <num_blocks, warps_per_block * CUDA_WARP_SIZE >> > (wt_grad, bias_grad, top_gradient, feeder_gradient, ln, sd, wt, numels, dst_dims[ndims-1], warps_per_block);
 		}
 		else
 		{
