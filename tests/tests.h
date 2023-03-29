@@ -29,6 +29,9 @@ int neural_network_test();
 int MNIST_test(const char* MNIST_training_images, const char* MNIST_training_labels, const char* MNIST_test_images, const char* MNIST_test_labels);
 int MNIST_test_gpu(const char* MNIST_training_images, const char* MNIST_training_labels, const char* MNIST_test_images, const char* MNIST_test_labels);
 int quantized_MNIST_test(const char* MNIST_training_images, const char* MNIST_training_labels, const char* MNIST_test_images, const char* MNIST_test_labels);
+int PixelCNN_test(const char* MNIST_training_images, const char* MNIST_training_labels, const char* MNIST_test_images, const char* MNIST_test_labels);
+int PixelCNN_CUDNN_test(const char* MNIST_training_images, const char* MNIST_training_labels, const char* MNIST_test_images, const char* MNIST_test_labels);
+int vae_test(const char* MNIST_training_images, const char* MNIST_test_images );
 
 
 // performance tests

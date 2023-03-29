@@ -812,8 +812,6 @@ void matmul_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dt
 template<typename Dtype>
 void add_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
-	MultiDimArray<Dtype>* operand1_md_array;
-	MultiDimArray<Dtype>* operand2_md_array;
 	uint64_t N;
 	const uint64_t* dims_array_top;
 	const uint64_t* dims_array_btm;
@@ -825,9 +823,6 @@ void add_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 	ndims = top_gradient_ptr->GetNDims();
 
 	assert(ndims == bottom_gradient_ptr->GetNDims());
-
-	operand1_md_array = children_ptr_array[0]->get_mdarray();
-	operand2_md_array = children_ptr_array[1]->get_mdarray();
 
 
 	dims_array_top = top_gradient_ptr->GetSizes();
@@ -889,13 +884,13 @@ void add_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 
 				if (broadcast_required)
 				{
-					gpu_add_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), (Dtype*)children_ptr_array[1]->get_data_ptr(), bottom_gradient_ptr->GetNDims(),
+					gpu_add_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNDims(),
 						children_ptr_array[0]->get_sizes(), children_ptr_array[1]->get_sizes(), top_gradient_ptr->GetSizes(),
 						children_ptr_array[0]->get_strides(), children_ptr_array[1]->get_strides(), top_gradient_ptr->GetStrides());
 				}
 				else
 				{
-					gpu_add_backward(bottom_gradient_ptr->GetNumels(), operand2_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr());
+					gpu_add_backward(bottom_gradient_ptr->GetNumels(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr());
 				}
 
 				}
@@ -904,13 +899,13 @@ void add_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 				broadcast_required = top_gradient_ptr->check_broadcast_required(children_ptr_array[1]->get_sizes());
 				if (broadcast_required)
 				{
-					gpu_add_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), (Dtype*)children_ptr_array[0]->get_data_ptr(), bottom_gradient_ptr->GetNDims(),
+					gpu_add_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNDims(),
 						children_ptr_array[1]->get_sizes(), children_ptr_array[0]->get_sizes(), top_gradient_ptr->GetSizes(),
 						children_ptr_array[1]->get_strides(), children_ptr_array[0]->get_strides(), top_gradient_ptr->GetStrides());
 				}
 				else
 				{
-					gpu_add_backward(bottom_gradient_ptr->GetNumels(), operand1_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr());
+					gpu_add_backward(bottom_gradient_ptr->GetNumels(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr());
 				}
 			}
 #else
@@ -927,8 +922,6 @@ void add_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 template<typename Dtype>
 void sub_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype>* top_gradient_ptr, lten::TensorImpl<Dtype>** children_ptr_array, int child_index, lten::TensorImpl<Dtype>* parent_ptr)
 {
-	MultiDimArray<Dtype>* operand1_md_array;
-	MultiDimArray<Dtype>* operand2_md_array;
 	uint64_t N;
 	const uint64_t* dims_array_top;
 	const uint64_t* dims_array_btm;
@@ -940,8 +933,6 @@ void sub_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 	ndims = top_gradient_ptr->GetNDims();
 	assert(ndims == bottom_gradient_ptr->GetNDims());
 
-	operand1_md_array = children_ptr_array[0]->get_mdarray();
-	operand2_md_array = children_ptr_array[1]->get_mdarray();
 
 	dims_array_top = top_gradient_ptr->GetSizes();
 	dims_array_btm = bottom_gradient_ptr->GetSizes();
@@ -1019,13 +1010,13 @@ void sub_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 
 				if (broadcast_required)
 				{
-					gpu_sub_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), (Dtype*)children_ptr_array[1]->get_data_ptr(), bottom_gradient_ptr->GetNDims(),
+					gpu_sub_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNDims(),
 						children_ptr_array[0]->get_sizes(), children_ptr_array[1]->get_sizes(), top_gradient_ptr->GetSizes(),
 						children_ptr_array[0]->get_strides(), children_ptr_array[1]->get_strides(), top_gradient_ptr->GetStrides(), static_cast<Dtype>(1));
 				}
 				else
 				{
-					gpu_sub_backward(bottom_gradient_ptr->GetNumels(), operand2_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), static_cast<Dtype>(1));
+					gpu_sub_backward(bottom_gradient_ptr->GetNumels(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), static_cast<Dtype>(1));
 				}
 
 			}
@@ -1034,13 +1025,13 @@ void sub_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 				broadcast_required = top_gradient_ptr->check_broadcast_required(children_ptr_array[1]->get_sizes());
 				if (broadcast_required)
 				{
-					gpu_sub_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), (Dtype*)children_ptr_array[0]->get_data_ptr(), bottom_gradient_ptr->GetNDims(),
+					gpu_sub_backward(top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetNDims(),
 						children_ptr_array[1]->get_sizes(), children_ptr_array[0]->get_sizes(), top_gradient_ptr->GetSizes(),
 						children_ptr_array[1]->get_strides(), children_ptr_array[0]->get_strides(), top_gradient_ptr->GetStrides(), static_cast<Dtype>(-1));
 				}
 				else
 				{
-					gpu_sub_backward(bottom_gradient_ptr->GetNumels(), operand1_md_array->GetDataPtr(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), static_cast<Dtype>(-1));
+					gpu_sub_backward(bottom_gradient_ptr->GetNumels(), top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr(), static_cast<Dtype>(-1));
 				}
 			}
 #else
@@ -4349,8 +4340,7 @@ void nll_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 	MultiDimArray<Dtype>* operand2_md_array;
 	Dtype scale;
 	lten::device device_type;
-	uint64_t N;
-
+	int dim;
 
 	scale = static_cast<Dtype>(-1) / static_cast<Dtype>(children_ptr_array[0]->get_sizes()[0]);
 
@@ -4359,54 +4349,44 @@ void nll_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<Dtype
 
 	device_type = parent_ptr->get_device();
 
-	N = bottom_gradient_ptr->GetNumels();
+	dim = static_cast<int>(parent_ptr->misc1_);
 
 	if (lten::CPU == device_type)
 	{
-		if (top_gradient_ptr)
-		{
-			scale *= static_cast<Dtype>(top_gradient_ptr->GetDataPtr()[0]);
-		}
-
 		if (child_index == 0) // operand 1
-		{
-			Dtype* op2_data = operand2_md_array->GetDataPtr();
+		{		
+			OffsetCalc_nll ofs(operand1_md_array->GetStrides(), operand2_md_array->GetStrides(), operand2_md_array->GetNDims(), dim);
+			uint64_t len = operand2_md_array->GetNumels();
+			float grad = 1.0f / (-1.0f * len);
+			memset(bottom_gradient_ptr->GetDataPtr(), 0, bottom_gradient_ptr->GetNumels() * sizeof(Dtype));
+			
+			Dtype* one_hot_data = operand2_md_array->GetDataPtr();
 			Dtype* bottom_data = bottom_gradient_ptr->GetDataPtr();
 
-			cpu_mul(N, static_cast<Dtype>(scale), op2_data, bottom_data);
+			for (uint64_t i = 0; i < len; i++)
+			{
+				bottom_data[ofs.GetOffset(i, (int)one_hot_data[i])] = grad;
+			}
 		}
 		else
 		{
-			Dtype* op1_data = operand1_md_array->GetDataPtr();
-			Dtype* bottom_data = bottom_gradient_ptr->GetDataPtr();
-
-			cpu_mul(N, static_cast<Dtype>(scale), op1_data, bottom_data);
-		}
+			memset(bottom_gradient_ptr->GetDataPtr(), 0, bottom_gradient_ptr->GetNumels() * sizeof(Dtype));
+		}		
 	}
 	else
 	{
 		if (lten::GPU == device_type)
 		{
 #ifdef USE_CUDA
-			if (top_gradient_ptr)
-			{
-				scale *= static_cast<Dtype>(top_gradient_ptr->GetDataPtr()[0]);
-			}
-
 			if (child_index == 0) // operand 1
 			{
-				Dtype* op2_data = operand2_md_array->GetDataPtr();
-				Dtype* bottom_data = bottom_gradient_ptr->GetDataPtr();
-				Dtype* top_data = nullptr;
-
-				gpu_mul(N, static_cast<Dtype>(scale), op2_data, bottom_data);
+				ZeroMemoryOnGPU(bottom_gradient_ptr->GetDataPtr(), sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
+				OffsetCalc_nll ofs(operand1_md_array->GetStrides(), operand2_md_array->GetStrides(), operand2_md_array->GetNDims(), dim);
+				gpu_nll_backward(bottom_gradient_ptr->GetDataPtr(), operand2_md_array->GetDataPtr(), operand2_md_array->GetNumels(), &ofs);
 			}
 			else
 			{
-				Dtype* op1_data = operand1_md_array->GetDataPtr();
-				Dtype* bottom_data = bottom_gradient_ptr->GetDataPtr();
-
-				gpu_mul(N, static_cast<Dtype>(scale), op1_data, bottom_data);
+				ZeroMemoryOnGPU(bottom_gradient_ptr->GetDataPtr(), sizeof(Dtype) * bottom_gradient_ptr->GetNumels());
 			}
 #else
 			LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");

@@ -1874,4 +1874,91 @@ struct OffsetCalc_permutaion2
 };
 
 
+
+// strides_probs strides of log_softmax output tensor
+// strides_labels strides of one hot tensor (tensor contains the hot indices)
+// one_hot_dim same as softmax dim
+// the idea here is to 'iterate' through the one hot tensor and locate the corresponding
+// value in the log probabilty tensor (i.e. the output from log_softmax)
+struct OffsetCalc_nll
+{
+	OffsetCalc_nll(const uint64_t* strides_probs, const uint64_t* strides_labels, int ndims, int one_hot_dim)
+	{
+		uint32_t divisor;
+		uint32_t shift;
+		int i;
+
+		for (i = 0; i < ndims; i++)
+		{
+			divisor = (uint32_t)strides_labels[i];
+
+			for (shift = 0; shift < 32; shift++)
+			{
+				if ((1U << shift) >= divisor)
+				{
+					break;
+				}
+			}
+
+			uint64_t one = 1;
+			uint64_t magic = ((one << 32) * ((one << shift) - divisor)) / divisor + 1;
+
+			div_lables_[i].magic = (uint32_t)magic;
+			div_lables_[i].shift = shift;
+			div_lables_[i].divisor = divisor;
+
+			strides_probs_[i] = (uint32_t)strides_probs[i];
+		}
+
+		ndims_ = ndims;
+		one_hot_dim_ = one_hot_dim;
+	}
+
+
+	LTEN_HOST_DEVICE uint32_t GetOffset(uint32_t index, uint32_t one_hot_index)
+	{
+		uint32_t offs;
+
+		int i;
+		uint32_t coordinate;
+
+		offs = 0;
+
+#ifdef __NVCC__
+#pragma unroll
+#endif
+		for (i = 0; i < MAX_DIMS; ++i)
+		{
+			if (i == ndims_)
+			{
+				break;
+			}
+
+			coordinate = ((((uint64_t)index * div_lables_[i].magic) >> 32) + index) >> div_lables_[i].shift;
+			index = index - coordinate * div_lables_[i].divisor;
+
+			if (i == one_hot_dim_)
+			{
+				offs += one_hot_index * strides_probs_[i];
+			}
+			else
+			{
+				offs += coordinate * strides_probs_[i];
+			}	
+		}
+
+		return offs;
+
+	}
+
+	Divider div_lables_[MAX_DIMS];
+	uint32_t strides_probs_[MAX_DIMS];
+
+	int ndims_;
+	int one_hot_dim_;
+
+};
+
+
+
 #endif // OFFSET_CALC_H

@@ -404,13 +404,19 @@ int main(int argc, char* argv[])
 			}
 		}
 	}
+	
+	//ret = vae_test(MNIST_training_images, MNIST_test_images);
+	//ret = MNIST_test_gpu(MNIST_training_images, MNIST_training_labels, MNIST_test_images, MNIST_test_labels);
+	//ret = MNIST_test(MNIST_training_images, MNIST_training_labels, MNIST_test_images, MNIST_test_labels);
+	//ret = PixelCNN_test(MNIST_training_images, MNIST_training_labels, MNIST_test_images, MNIST_test_labels);
+	//ret = PixlCNN_CUDNN_test(MNIST_training_images, MNIST_training_labels, MNIST_test_images, MNIST_test_labels);
 
 	//goto mist_test;
 	//run_on_gpu = false;
 	//simple_binary_op_test(); return 0;
 	//matmul_test(true);
 	//neural_network_test();
-	//run_on_gpu = false;
+	run_on_gpu = false;
 	if (run_on_gpu)
 	{
 		printf("running unit tests on GPU\n");

@@ -332,6 +332,79 @@ namespace lten {
 		return TensorFromBuffer(dims_ptr, ndims, data_ptr, true, options);
 	}
 
+	Tensor Multinomial(Tensor probabilities, int nsamples)
+	{
+		uint64_t dims[2];
+		uint32_t ndims;
+		dtype data_type;
+		float* input_ptr;
+		float* output_ptr;
+		float* cummulative;
+		TensorOps options;
+		int i;
+		int j;
+		int k;
+		int rand_val;
+		int distribution_len;
+		int sample;
+
+		if (probabilities.get_ndims() > 2)
+		{
+			LTEN_ERR("Input must be a vector or an mxn matrix");
+		}
+
+		if (probabilities.get_data_type() != FLOAT32)
+		{
+			LTEN_ERR("Invalid tensor data type"); // only fp32 for now, fp16 may be added
+		}
+		options.device_type = probabilities.get_device();
+		options.device_index = probabilities.get_device_index();
+		options.data_type = probabilities.get_data_type();
+
+		dims[0] = (probabilities.get_sizes())[0];
+		dims[1] = nsamples;
+
+		output_ptr = new float[dims[0] * dims[1]];
+		distribution_len = probabilities.get_numels() / dims[0];
+
+		cummulative = new float[distribution_len];
+
+		input_ptr = (float*)probabilities.get_data_ptr();
+
+		for (i = 0; i < dims[0]; i++)
+		{
+			memcpy(cummulative, input_ptr + i * distribution_len, sizeof(float) * distribution_len);
+			for (j = 0; j < nsamples; j++)
+			{			
+				for (k = 1; k < distribution_len; k++)
+				{
+					cummulative[k] += cummulative[k - 1];
+				}
+
+				for (k = 0; k < distribution_len; k++) // normalize
+				{
+					cummulative[k] /= cummulative[distribution_len - 1];
+				}
+
+				sample = distribution_len - 1;
+				rand_val = rand() % 1000;
+				for (k = 0; k < distribution_len; k++) // sample
+				{
+					if (cummulative[k] * 1000.0 > rand_val)
+					{
+						sample = k;
+						break;
+					}
+				}
+				output_ptr[i * nsamples + j] = (float)sample;
+			}
+		}
+
+		delete cummulative;
+
+		return TensorFromBuffer(dims, 2, output_ptr, true, &options);
+	}
+
 }
 
 

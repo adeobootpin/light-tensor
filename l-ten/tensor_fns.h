@@ -43,10 +43,10 @@ template<typename Dtype>
 void gpu_add(uint64_t N, Dtype* A, Dtype* B, Dtype* C);
 
 template<typename Dtype>
-void gpu_add_backward(uint64_t N, Dtype* operand, Dtype* top_gradient, Dtype* bottom_gradient);
+void gpu_add_backward(uint64_t N, Dtype* top_gradient, Dtype* bottom_gradient);
 
 template<typename Dtype>
-void gpu_add_backward(Dtype* top_gradient, Dtype* bottom_gradient, Dtype* other_operand, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides);
+void gpu_add_backward(Dtype* top_gradient, Dtype* bottom_gradient, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides);
 
 template<typename Dtype>
 void gpu_add(Dtype* A, Dtype* B, Dtype* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
@@ -55,10 +55,10 @@ template<typename Dtype>
 void gpu_sub(uint64_t N, Dtype* A, Dtype* B, Dtype* C);
 
 template<typename Dtype>
-void gpu_sub_backward(uint64_t N, Dtype* operand, Dtype* top_gradient, Dtype* bottom_gradient, Dtype scale);
+void gpu_sub_backward(uint64_t N, Dtype* top_gradient, Dtype* bottom_gradient, Dtype scale);
 
 template<typename Dtype>
-void gpu_sub_backward(Dtype* top_gradient, Dtype* bottom_gradient, Dtype* other_operand, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides, Dtype scale);
+void gpu_sub_backward(Dtype* top_gradient, Dtype* bottom_gradient, const int num_dims, const uint64_t* op1_dims, const uint64_t* op2_dims, const uint64_t* tg_dims, const uint64_t* op1_strides, const uint64_t* op2_strides, const uint64_t* tg_strides, Dtype scale);
 
 template<typename Dtype>
 void gpu_sub(Dtype* A, Dtype* B, Dtype* C, const uint64_t numels, const uint64_t* a_strides, const uint64_t* b_strides, const uint64_t* c_strides, const uint64_t* a_dims, const uint64_t* b_dims, const uint64_t* c_dims, const int ndims);
@@ -119,6 +119,12 @@ void gpu_gelu(Dtype* dst, Dtype* src, uint64_t len);
 
 template<typename Dtype>
 void gpu_gelu_backward(Dtype* bottom_gradient, const Dtype* top_gradient, const Dtype* src, uint64_t len);
+
+template<typename Dtype>
+void gpu_nll_backward(Dtype* bottom_gradient, const Dtype* one_hot_indices, uint64_t len, OffsetCalc_nll* ofs);
+
+template<typename Dtype>
+void gpu_nll(Dtype* loss, const Dtype* probabilities, const Dtype* one_hot_indices, uint64_t len, OffsetCalc_nll* ofs);
 
 template<typename Dtype>
 void gpu_reduce(uint32_t numels_dst, uint32_t numels_src, OffsetCalc_reverse_broadcast* offs, Dtype* dst, Dtype* src);

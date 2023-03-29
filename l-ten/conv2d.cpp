@@ -27,7 +27,7 @@ namespace lten {
 		}
 
 		std::default_random_engine generator;
-		float k = 1.0f / (channels_in_ * (kernel_h_ + kernel_w_));
+		float k = 1.0f / (channels_in_ * (kernel_h_ * kernel_w_));
 		std::uniform_real_distribution<float> distribution(-sqrtf(k), sqrtf(k));
 
 		raw_data_ptr = (float*)weight_ptr_->get_data_ptr();

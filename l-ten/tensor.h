@@ -2147,6 +2147,7 @@ namespace lten {
 	Tensor RandomTensor(const std::initializer_list<uint64_t>& dims, TensorOps* options = nullptr);
 	Tensor RandomTensor(const uint64_t* dims_ptr, int ndims, TensorOps* options = nullptr);
 
+	Tensor Multinomial(const Tensor probabilities, int nsamples);
 
 }
 

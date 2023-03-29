@@ -1067,8 +1067,8 @@ namespace lten {
 	Tensor gelu(Tensor& input);
 	Tensor softmax(Tensor& input, int dim = 1);
 	Tensor log_softmax(Tensor& input, int dim = 1);
-	Tensor mse_loss(Tensor& input, Tensor& target);
-	Tensor nll_loss(Tensor& input, Tensor& target);
+	Tensor mse_loss(Tensor& input, Tensor& target, bool mean_reduction = true);
+	Tensor nll_loss(Tensor& input, Tensor& target, int dim = 1);
 } // namespace lten
 
 #endif //LAYERS_H

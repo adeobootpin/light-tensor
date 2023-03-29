@@ -146,6 +146,12 @@ namespace lten {
 	}
 
 
+	//----------------------------------------------------
+	// Numerically stable log softmax 
+	//----------------------------------------------------
+	// sm = e^(xi - max)/Sigma_j=1->d(e^(xi - max)
+	// log sm = log(e^(xi - max)/Sigma_j=1->d(e^(xi - max))
+	// log sm = xi - max - log(Sigma_j=1->d(e^(xi - max)))
 	Tensor log_softmax(Tensor& input, int dim)
 	{
 		Tensor exps;
@@ -162,11 +168,10 @@ namespace lten {
 		exps = input_minus_max.exp();
 
 		sum = exps.sum(dim);
-
 		sum = sum.squeeze(0);
 		sum = sum.unsqueeze(dim);
 
-		return exps.div(sum).log();
+		return input_minus_max - sum.log();
 	}
 
 
@@ -253,7 +258,7 @@ namespace lten {
 	}
 #endif
 
-	Tensor mse_loss(Tensor& input, Tensor& target)
+	Tensor mse_loss(Tensor& input, Tensor& target, bool mean_reduction)
 	{
 		Tensor diff;
 		uint64_t numels;
@@ -262,12 +267,20 @@ namespace lten {
 
 		diff = input - target;
 		diff = (diff * diff).sum();
-		return (1.0f / numels) * diff;
+
+		if (mean_reduction)
+		{
+			return (1.0f / numels) * diff;
+		}
+		else
+		{
+			return diff;
+		}
 	}
 
 
 	// like libtorch, assumes input is result of log_softmax
-	Tensor nll_loss(Tensor& input, Tensor& target)
+	Tensor nll_loss(Tensor& input, Tensor& target, int dim)
 	{
 		uint64_t dims[1];
 		uint64_t len;
@@ -293,24 +306,29 @@ namespace lten {
 		input_data = static_cast<float*>(input.get_data_ptr());
 		target_data = static_cast<float*>(target.get_data_ptr());
 		loss = static_cast<float*>(resultImpl->get_data_ptr());
+		
+
+		OffsetCalc_nll ofs(input.get_strides(), target.get_strides(), input.get_ndims(), dim );
+		len = target.get_numels();
 
 		if (CPU == options.device_type)
 		{
 			val = 0;
 			for (i = 0; i < len; i++)
 			{
-				val += input_data[i] * target_data[i];
+				val += input_data[ofs.GetOffset(i, (int)target_data[i])];
 			}
 
-			*loss = val * (-1.0f / input.get_sizes()[0]);
-
+			*loss = val / (-1.0f * target.get_numels());
 		}
 		else
 		{
 			if (GPU == options.device_type)
 			{
 #ifdef USE_CUDA
-				gpu_nll(input_data, target_data, loss, len, input.get_sizes()[0]);
+				OffsetCalc_nll ofs(input.get_strides(), target.get_strides(), input.get_ndims(), dim);
+				len = target.get_numels();
+				gpu_nll(loss, input_data, target_data, len, &ofs);
 #else
 				LTEN_ERR("The USE_CUDA flag was not be set during the build (this flag must be set in order to use GPU tensors)");
 #endif
@@ -321,7 +339,7 @@ namespace lten {
 			}
 		}
 
-
+		resultImpl->misc1_ = dim;
 		resultImpl->add_child(*(static_cast<TensorImpl<float>*>(input.get_smart_ptr().get_real_object())));
 		resultImpl->add_child(*(static_cast<TensorImpl<float>*>(target.get_smart_ptr().get_real_object())));
 		resultImpl->set_grad_fn(nll_backward);
