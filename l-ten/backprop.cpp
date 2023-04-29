@@ -5077,7 +5077,25 @@ void permute_backward(MultiDimArray<Dtype>* bottom_gradient_ptr, MultiDimArray<D
 
 	if (lten::CPU == device_type)
 	{
-		//cpu_copy(numels, top_gradient_ptr->GetDataPtr(), bottom_gradient_ptr->GetDataPtr());
+		int i;
+		int ndims;
+		uint32_t* permutations;
+		uint64_t numels;
+
+		permutations = (uint32_t*)parent_ptr->misc_int_tensor_->get_data_ptr();
+		ndims = bottom_gradient_ptr->GetNDims();
+		numels = bottom_gradient_ptr->GetNumels();
+
+		OffsetCalc_permutaion ofs(bottom_gradient_ptr->GetStrides(), top_gradient_ptr->GetStrides(), permutations, ndims);
+		Dtype* src = top_gradient_ptr->GetDataPtr();
+		Dtype* dst = bottom_gradient_ptr->GetDataPtr();
+
+		for (i = 0; i < numels; i++)
+		{
+			uint32_t offset;
+			offset = ofs.GetOffset(i);
+			dst[offset] = src[i];
+		}
 	}
 	else
 	{

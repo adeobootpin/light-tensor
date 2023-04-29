@@ -735,10 +735,11 @@ int quantized_MNIST_test(const char* MNIST_training_images, const char* MNIST_tr
 	batch_size = 32;
 
 	input = lten::AllocateTensor({ static_cast<uint64_t>(batch_size), 1, img_dim, img_dim }, nullptr);
-	label = lten::AllocateTensor({ static_cast<uint64_t>(batch_size), 1, 1, label_len }, nullptr);
+	label = lten::AllocateTensor({ static_cast<uint64_t>(batch_size), 1, 1, 1 }, nullptr);
 	input.set_autograd(true);
 
-	lten::SGDOptimizer optimizer;
+
+	lten::AdamOptimizer optimizer;
 	optimizer.attach_network(net);
 	optimizer.set_learning_rate(lr);
 
@@ -767,17 +768,19 @@ int quantized_MNIST_test(const char* MNIST_training_images, const char* MNIST_tr
 			int example_idx = (i * batch_size + j) % total_training_examples;
 			memcpy(data_ptr + data_len * j, training_images + example_idx * data_len, sizeof(float) * data_len);
 
-			memset(label_array, 0, sizeof(label_array));
-			label_array[training_labels[example_idx]] = 1.0f;
-			memcpy(label_ptr + label_len * j, label_array, sizeof(label_array));
 
+			//memset(label_array, 0, sizeof(label_array));
+			//label_array[training_labels[example_idx]] = 1.0f;
+			//memcpy(label_ptr + label_len * j, label_array, sizeof(label_array));
+
+			label_ptr[j] = training_labels[example_idx];
 		}
 		//--------------------------------------------------------------------------------------
 
 
 		output = net.forward(input, layer_stats);
 
-		loss = nll_loss(output, label);
+		loss = nll_loss(output, label, 3);
 
 		if ((index++ % 100) == 0)
 		{
@@ -1655,7 +1658,9 @@ int vae_test(const char* MNIST_training_images, const char* MNIST_test_images)
 		}
 
 
-		lten::Tensor decode(lten::Tensor x)
+		// poor man's decoder: transpose convolutions not implemented so use fc layers to expand the features
+		// throw in a convolution to help keep the 'imageness' of the decoding (does not seem to work without it)
+		lten::Tensor decode(lten::Tensor x)  
 		{
 			int c;
 

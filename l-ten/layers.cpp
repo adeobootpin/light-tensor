@@ -130,6 +130,11 @@ namespace lten {
 		Tensor input_minus_max;
 		Tensor sum;
 
+		if (dim < 0)
+		{
+			dim = input.get_ndims() - 1;
+		}
+
 		max = input.max(dim);
 		max = max.squeeze(0);
 		max = max.unsqueeze(dim);
@@ -158,6 +163,11 @@ namespace lten {
 		Tensor max;
 		Tensor input_minus_max;
 		Tensor sum;
+
+		if (dim < 0)
+		{
+			dim = input.get_ndims() - 1;
+		}
 
 		max = input.max(dim);
 		max = max.squeeze(0);

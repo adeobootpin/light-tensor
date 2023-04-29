@@ -122,6 +122,9 @@
     <ClCompile Include="embedding.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="multiheadattention.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="im_col.cu">

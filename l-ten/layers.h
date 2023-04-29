@@ -850,6 +850,28 @@ namespace lten {
 		uint32_t axes_[MAX_DIMS];
 	};
 
+	class MultiheadAttention : public Module
+	{
+	public:
+		MultiheadAttention(uint32_t embedding_dim, uint32_t num_heads, bool use_bias = false) : embedding_dim_(embedding_dim), num_heads_(num_heads), use_bias_(use_bias){}
+		bool init();
+		Tensor forward(Tensor& input);
+		Tensor* get_weights() { return weight_ptr_; }
+		Tensor* get_bias() { return bias_ptr_; }
+		void clear_gradients();
+		std::vector<Tensor*> get_all_weights();
+		void to(device target_device, int target_device_index = 0);
+	private:
+		uint32_t embedding_dim_;
+		uint32_t num_heads_;
+		Tensor* weight_ptr_;
+		Tensor* bias_ptr_;
+		Tensor* projection_ptr_;
+		Tensor* projection_bias_ptr_;
+		bool use_bias_;
+	};
+
+
 #ifdef USE_CUDA
 	class BatchNorm_CUDNN : public Module
 	{

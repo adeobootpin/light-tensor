@@ -404,7 +404,7 @@ int main(int argc, char* argv[])
 			}
 		}
 	}
-	
+
 	//ret = vae_test(MNIST_training_images, MNIST_test_images);
 	//ret = MNIST_test_gpu(MNIST_training_images, MNIST_training_labels, MNIST_test_images, MNIST_test_labels);
 	//ret = MNIST_test(MNIST_training_images, MNIST_training_labels, MNIST_test_images, MNIST_test_labels);
@@ -658,7 +658,6 @@ int main(int argc, char* argv[])
 	
 	if (!run_on_gpu)
 	{
-		/*
 		ret = neural_network_test();
 		total_tests++;
 		if (ret)
@@ -670,7 +669,6 @@ int main(int argc, char* argv[])
 			total_tests_passed++;
 			printf("training regression model passed\n");
 		}
-		*/
 
 		ret = MNIST_test(MNIST_training_images, MNIST_training_labels, MNIST_test_images, MNIST_test_labels);
 		total_tests++;

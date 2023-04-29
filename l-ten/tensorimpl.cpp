@@ -1980,6 +1980,7 @@ namespace lten {
 
 		data_ptr_tensor_ = &operand1;
 
+		set_accumulate_gradients(operand1.accumulate_gradients_);
 
 		if (operand1.autograd_on())
 		{
